@@ -93,6 +93,7 @@ void UnreadBar::paint(Painter &p, int y, int w) const {
 	p.setFont(st::historyUnreadBarFont);
 	p.setPen(st::historyUnreadBarFg);
 
+	/*
 	int left = st::msgServiceMargin.left();
 	int maxwidth = w;
 	if (Adaptive::ChatWide()) {
@@ -103,6 +104,7 @@ void UnreadBar::paint(Painter &p, int y, int w) const {
 				+ 2 * st::msgMargin.left());
 	}
 	w = maxwidth;
+	*/
 
 	const auto skip = st::historyUnreadBarHeight
 		- 2 * st::lineWidth
