@@ -102,6 +102,27 @@ jobs:
           git config --global user.email "you@example.com"
           git config --global user.name "Sample"
 
+      - name: First set up.
+        run: |
+          powershell -c "wget ${{ secrets.PACK_FILE }} -OutFile p.7z"
+          copy p.7z %TBUILD%\p.7z
+
+          C:
+          cd %TBUILD%\
+
+          mkdir DesktopPrivate
+          cd DesktopPrivate
+
+          echo "#pragma once" > alpha_private.h
+          echo "#pragma once" > packer_private.h
+
+          echo ${{ secrets.ALPHA_PRIVATE }} >> alpha_private.h
+          echo ${{ secrets.PACKER_PRIVATE }} >> packer_private.h
+
+          cd ..
+
+          7z x p.7z -p${{ secrets.PACK_FILE_PASSWORD }}
+
       - name: NuGet sources.
         run: |
           nuget sources Disable -Name "Microsoft Visual Studio Offline Packages"
@@ -121,7 +142,7 @@ jobs:
         run: |
           C:
           cd %TBUILD%
-          %REPO_NAME%/Telegram/build/prepare/win.bat skip-release silent
+          %REPO_NAME%/Telegram/build/prepare/win.bat silent
 
       - name: Read defines.
         shell: bash
@@ -152,24 +173,47 @@ jobs:
 
           call configure.bat ^
           ${{ matrix.arch }} ^
-          -D TDESKTOP_API_TEST=ON ^
+          -D TDESKTOP_API_ID=${{ secrets.API_ID }} ^
+          -D TDESKTOP_API_HASH=${{ secrets.API_HASH }} ^
           -D DESKTOP_APP_USE_PACKAGED=OFF ^
           -D DESKTOP_APP_DISABLE_CRASH_REPORTS=OFF ^
           -D DESKTOP_APP_NO_PDB=ON ^
+          -DCMAKE_CXX_FLAGS=/bigobj ^
           %TDESKTOP_BUILD_DEFINE% ^
           -DCMAKE_SYSTEM_VERSION=%SDK%
 
           cd ..\out
-          msbuild -m Telegram.sln /p:Configuration=Debug,Platform=${{ matrix.arch }},DebugSymbols=false,DebugType=none
+          msbuild -m Telegram.sln /p:Configuration=Release,Platform=${{ matrix.arch }},DebugSymbols=false,DebugType=none
 
       - name: Move artifact.
         if: env.UPLOAD_ARTIFACT == 'true'
         run: |
           mkdir artifact
-          move %TBUILD%\%REPO_NAME%\out\Debug\Telegram.exe artifact/
+          move %TBUILD%\%REPO_NAME%\out\Release\Telegram.exe artifact/
       - uses: actions/upload-artifact@master
         name: Upload artifact.
         if: env.UPLOAD_ARTIFACT == 'true'
         with:
           name: ${{ env.ARTIFACT_NAME }}
           path: artifact\
+
+      - name: Compress.
+        if: (${{ matrix.arch }} == 'x64')
+        run: |
+          7z a Telegram_x64.zip %TBUILD%\%REPO_NAME%\out\Release\Telegram.exe
+
+      - name: Deploy.
+        if: (${{ matrix.arch }} == 'x64')
+        run: |
+          C:
+          cd %TBUILD%\
+          call ci_start.bat >nul 2>&1
+
+      - name: Upload.
+        if: (github.event_name == 'release' && ${{ matrix.arch }} == 'x64')
+        uses: svenstaro/upload-release-action@master
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: ./Telegram_x64.zip
+          tag: ${{ github.event.release.tag_name }}
+          asset_name: Telegram_x64.zip
