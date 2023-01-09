@@ -24,6 +24,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/history_view_message.h" // FromNameFg.
 #include "history/view/history_view_service_message.h"
 #include "history/view/media/history_view_document.h"
+#include "core/application.h"
+#include "core/core_settings.h"
 #include "core/click_handler_types.h"
 #include "core/ui_integration.h"
 #include "layout/layout_position.h"
@@ -477,7 +479,11 @@ void HistoryMessageReply::paint(
 	}
 
 	if (w > st::msgReplyBarSkip) {
-		if (replyToMsg) {
+		auto blocked = replyToMsg
+			&& replyToMsg->from()->isUser()
+			&& replyToMsg->from()->asUser()->isBlocked();
+		const auto blockUsersInGroups = Core::App().settings().fork().blockUsersInGroups();
+		if (replyToMsg && (!blocked || !blockUsersInGroups)) {
 			const auto media = replyToMsg->media();
 			auto hasPreview = media && media->hasReplyPreview();
 			if (hasPreview && w < st::msgReplyBarSkip + st::msgReplyBarSize.height()) {
@@ -546,7 +552,7 @@ void HistoryMessageReply::paint(
 			p.setPen(inBubble
 				? stm->msgDateFg
 				: st->msgDateImgFg());
-			p.drawTextLeft(x + st::msgReplyBarSkip, y + st::msgReplyPadding.top() + (st::msgReplyBarSize.height() - st::msgDateFont->height) / 2, w + 2 * x, st::msgDateFont->elided(replyToMsgId ? tr::lng_profile_loading(tr::now) : tr::lng_deleted_message(tr::now), w - st::msgReplyBarSkip));
+			p.drawTextLeft(x + st::msgReplyBarSkip, y + st::msgReplyPadding.top() + (st::msgReplyBarSize.height() - st::msgDateFont->height) / 2, w + 2 * x, st::msgDateFont->elided((replyToMsgId && (!blocked || !blockUsersInGroups)) ? tr::lng_profile_loading(tr::now) : tr::lng_deleted_message(tr::now), w - st::msgReplyBarSkip));
 		}
 	}
 }

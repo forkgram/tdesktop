@@ -42,6 +42,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/item_text_options.h"
 #include "ui/painter.h"
 #include "data/data_session.h"
+#include "data/data_user.h"
 #include "data/data_groups.h"
 #include "data/data_forum.h"
 #include "data/data_forum_topic.h"
@@ -586,6 +587,12 @@ bool Element::isHiddenByGroup() const {
 }
 
 bool Element::isHidden() const {
+	const auto blockUsersInGroups = Core::App().settings().fork().blockUsersInGroups();
+	if (blockUsersInGroups
+		&& data()->from()->isUser()
+		&& data()->from()->asUser()->isBlocked()) {
+		return true;
+	}
 	return isHiddenByGroup();
 }
 

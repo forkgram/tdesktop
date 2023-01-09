@@ -42,6 +42,7 @@ QByteArray ForkSettings::serialize() const {
 			<< qint32(_useOriginalTrayIcon ? 1 : 0)
 			<< qint32(_autoSubmitPasscode ? 1 : 0)
 			<< qint32(_emojiPopupOnClick ? 1 : 0)
+			<< qint32(_blockUsersInGroups ? 1 : 0)
 			;
 	}
 	return result;
@@ -68,6 +69,7 @@ void ForkSettings::addFromSerialized(const QByteArray &serialized) {
 	qint32 useOriginalTrayIcon = _useOriginalTrayIcon;
 	qint32 autoSubmitPasscode = _autoSubmitPasscode;
 	qint32 emojiPopupOnClick = _emojiPopupOnClick;
+	qint32 blockUsersInGroups = _blockUsersInGroups;
 
 	if (!stream.atEnd()) {
 		stream
@@ -84,6 +86,7 @@ void ForkSettings::addFromSerialized(const QByteArray &serialized) {
 			>> useOriginalTrayIcon
 			>> autoSubmitPasscode
 			>> emojiPopupOnClick
+			>> blockUsersInGroups
 			;
 	}
 	if (stream.status() != QDataStream::Ok) {
@@ -106,6 +109,7 @@ void ForkSettings::addFromSerialized(const QByteArray &serialized) {
 	_useOriginalTrayIcon = (useOriginalTrayIcon == 1);
 	_autoSubmitPasscode = (autoSubmitPasscode == 1);
 	_emojiPopupOnClick = (emojiPopupOnClick == 1);
+	_blockUsersInGroups = (blockUsersInGroups == 1);
 }
 
 void ForkSettings::resetOnLastLogout() {
@@ -121,6 +125,7 @@ void ForkSettings::resetOnLastLogout() {
 	_useOriginalTrayIcon = false;
 	_autoSubmitPasscode = false;
 	_emojiPopupOnClick = false;
+	_blockUsersInGroups = false;
 }
 
 } // namespace Core
