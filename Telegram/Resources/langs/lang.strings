@@ -461,6 +461,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_settings_use_original_tray_icon" = "Use original tray icon";
 "lng_settings_auto_submit_passcode" = "Auto-submit local passcode";
 "lng_settings_emoji_on_click" = "Disable emoji popup display on hovering";
+"lng_settings_block_users_in_groups" = "Block users in groups";
 
 "lng_settings_custom_sticker_size" = "Custom Sticker Size";
 "lng_settings_sticker_size_label" = "Allowed values are between 50 and 256.";

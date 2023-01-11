@@ -407,6 +407,15 @@ void SetupForkContent(
 			Core::App().settings().fork().setEmojiPopupOnClick(checked);
 		});
 
+	//
+	addRestart(
+		tr::lng_settings_block_users_in_groups(tr::now),
+		[] { return Core::App().settings().fork().blockUsersInGroups(); },
+		[=](bool checked) {
+			Core::App().settings().fork().setBlockUsersInGroups(checked);
+			Core::App().saveSettingsDelayed();
+		});
+
 	AddDivider(inner);
 
 }
