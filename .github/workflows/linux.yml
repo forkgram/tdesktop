@@ -1,10 +1,6 @@
 name: Linux.
 
 on:
-  release:
-    types: [published]
-  repository_dispatch:
-    types: ["Restart linux workflow."]
   push:
     paths-ignore:
       - 'docs/**'

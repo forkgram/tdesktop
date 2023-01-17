@@ -8,7 +8,7 @@
 {%- set CMAKE_VER = "3.24.3" -%}
 {%- set CMAKE_FILE = "cmake-" ~ CMAKE_VER ~ "-Linux-x86_64.sh" -%}
 {%- set CFLAGS_DEBUG = "-g -pipe -fPIC -fstack-protector-all -fstack-clash-protection -D_GLIBCXX_ASSERTIONS" -%}
-{%- set CFLAGS_LTO = "-flto=auto -ffat-lto-objects" -%}
+{%- set CFLAGS_LTO = " " -%}
 {%- set LibrariesPath = "/usr/src/Libraries" -%}
 
 # syntax=docker/dockerfile:1
