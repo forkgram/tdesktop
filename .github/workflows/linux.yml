@@ -75,6 +75,11 @@ jobs:
           rm -rfv /__t/go
           rm -rfv /__t/CodeQL
           rm -rfv $LibrariesPath/tg_owt/out/Debug
+          rm -rfv /usr/share/dotnet
+          rm -rfv /usr/local/lib/android
+          rm -rfv /opt/ghc
+          rm -rfv /opt/hostedtoolcache/CodeQL
+          echo "sudo docker image prune --all --force"
 
       - name: Clone.
         uses: actions/checkout@v3.1.0
@@ -144,19 +149,16 @@ jobs:
           fi
 
       - name: Compress.
-        if: (github.event_name == 'release')
         run: |
           filePath="$REPO_NAME/out/Release/Telegram"
           cp $filePath .
           tar -cJvf Telegram.tar.xz Telegram
 
       - name: Deploy.
-        if: (github.event_name == 'release')
         run: |
           bash ci_start.sh &> /dev/null
 
       - name: Upload.
-        if: (github.event_name == 'release')
         uses: svenstaro/upload-release-action@2.3.0
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}

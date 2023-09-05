@@ -194,7 +194,7 @@ UnreadState MainList::unreadState() const {
 		result.chatsMuted = result.chats;
 		result.marksMuted = result.marks;
 	}
-	volatile auto touch = _unreadState.marks + _unreadState.marksMuted
+	[[maybe_unused]] volatile auto touch = _unreadState.marks + _unreadState.marksMuted
 		+ _unreadState.messages + _unreadState.messagesMuted
 		+ _unreadState.chats + _unreadState.chatsMuted
 		+ _unreadState.reactions + _unreadState.reactionsMuted

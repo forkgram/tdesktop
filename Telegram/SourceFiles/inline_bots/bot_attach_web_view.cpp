@@ -1261,7 +1261,7 @@ void AttachWebView::show(
 	const auto buttons = (hasSettings ? Button::Settings : Button::None)
 		| (hasOpenBot ? Button::OpenBot : Button::None)
 		| (hasRemoveFromMenu ? Button::RemoveFromMenu : Button::None);
-	const auto bot = _bot;
+	// const auto bot = _bot;
 
 	_lastShownUrl = url;
 	_lastShownQueryId = queryId;
