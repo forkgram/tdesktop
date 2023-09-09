@@ -92,6 +92,9 @@ jobs:
         run: |
           nuget sources Disable -Name "Microsoft Visual Studio Offline Packages"
           nuget sources Add -Source https://api.nuget.org/v3/index.json & exit 0
+          if [ %GITHUB_REF% == 'refs/heads/ttest' ]; then
+            echo "Use the open credentials."
+          fi
 
       - name: Libraries cache.
         id: cache-libs
@@ -123,7 +126,7 @@ jobs:
           echo "TDESKTOP_BUILD_DEFINE=$DEFINE" >> $GITHUB_ENV
 
           API="-D TDESKTOP_API_TEST=ON"
-          if [ ${{ github.ref == 'refs/heads/nightly' }} ]; then
+          if [ %GITHUB_REF% == 'refs/heads/nightly' ]; then
             echo "Use the open credentials."
             API="-D TDESKTOP_API_ID=611335 -D TDESKTOP_API_HASH=d524b414d21f4d37f08684c1df41ac9c"
           fi
