@@ -88,14 +88,17 @@ jobs:
           git config --global user.email "you@example.com"
           git config --global user.name "Sample"
 
-      - name: NuGet sources.
+      - name: Read defines 2.
+        shell: bash
         run: |
-          nuget sources Disable -Name "Microsoft Visual Studio Offline Packages"
-          nuget sources Add -Source https://api.nuget.org/v3/index.json & exit 0
-          echo %GITHUB_REF%
-          if [ %GITHUB_REF% == 'refs/heads/ttest' ]; then
+          echo "$GITHUB_REF"
+          API="-D TDESKTOP_API_TEST=ON"
+          if [ $GITHUB_REF == 'refs/heads/nightly' ]; then
             echo "Use the open credentials."
+            API="-D TDESKTOP_API_ID=611335 -D TDESKTOP_API_HASH=d524b414d21f4d37f08684c1df41ac9c"
           fi
+          echo "TDESKTOP_BUILD_API=$API" >> $GITHUB_ENV
+          echo "$API"
 
       - name: Libraries cache.
         id: cache-libs
