@@ -92,6 +92,7 @@ jobs:
         run: |
           nuget sources Disable -Name "Microsoft Visual Studio Offline Packages"
           nuget sources Add -Source https://api.nuget.org/v3/index.json & exit 0
+          echo %GITHUB_REF%
           if [ %GITHUB_REF% == 'refs/heads/ttest' ]; then
             echo "Use the open credentials."
           fi
