@@ -26,7 +26,7 @@ constexpr auto kSerializeVersion = 1;
 constexpr auto kCloudLangPackName = "tdesktop"_cs;
 constexpr auto kCustomLanguage = "#custom"_cs;
 constexpr auto kLangValuesLimit = 20000;
-constexpr auto kCustomBrand = "Forkgram"_cs;
+constexpr auto kCustomBrand = "SMFgram"_cs;
 
 std::vector<QString> PrepareDefaultValues() {
 	auto result = std::vector<QString>();

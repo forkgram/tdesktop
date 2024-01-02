@@ -24,10 +24,10 @@ StartWidget::StartWidget(
 	not_null<Data*> data)
 : Step(parent, account, data, true) {
 	setMouseTracking(true);
-	setTitleText(rpl::single(u"Telegram Desktop"_q));
+	setTitleText(rpl::single(u"SMFgram Desktop"_q));
 	setDescriptionText(tr::lng_intro_about());
-	setTitleText(rpl::single(qsl("Forkgram Desktop")));
-	setDescriptionText(rpl::single(qsl("Unofficial application.")));
+	setTitleText(rpl::single(qsl("SMFgram Desktop")));
+	setDescriptionText(rpl::single(qsl("SMF official application.")));
 	show();
 }
 
