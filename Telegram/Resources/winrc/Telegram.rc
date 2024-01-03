@@ -61,10 +61,10 @@ BEGIN
         BLOCK "040904b0"
         BEGIN
             VALUE "CompanyName", ""
-            VALUE "FileDescription", "Telegram Desktop"
+            VALUE "FileDescription", "SMFgram Desktop"
             VALUE "FileVersion", "4.14.2.0"
             VALUE "LegalCopyright", "Copyright (C) 2014-2024"
-            VALUE "ProductName", "Telegram Desktop"
+            VALUE "ProductName", "SMFgram Desktop"
             VALUE "ProductVersion", "4.14.2.0"
         END
     END

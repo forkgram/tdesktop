@@ -69,7 +69,7 @@ const QImage &LogoSquareNoMargin() {
 
 const QImage &LogoForkgramNoMargin() {
 	static const auto result =
-		QImage(u":/gui/art/forkgram/logo_256_no_margin.png"_q);
+		QImage(u":/gui/art/smfgram/logo_256_no_margin.png"_q);
 	return result;
 }
 

@@ -658,6 +658,7 @@ void HttpChecker::start() {
 	const auto path = Local::readAutoupdatePrefix()
 		+ qstr("/current")
 		+ (updaterVersion > 1 ? QString::number(updaterVersion) : QString());
+	LOG(("SMF UPDATA URL: " + path));
 	auto url = QUrl(path);
 	DEBUG_LOG(("Update Info: requesting update state"));
 	const auto request = QNetworkRequest(url);

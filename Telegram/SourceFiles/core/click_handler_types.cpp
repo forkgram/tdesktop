@@ -311,7 +311,7 @@ void BotCommandClickHandler::onClick(ClickContext context) const {
 }
 
 auto BotCommandClickHandler::getTextEntity() const -> TextEntity {
-	return { EntityType::BotCommand };
+	return { EntityType::BotCommand }; 
 }
 
 MonospaceClickHandler::MonospaceClickHandler(

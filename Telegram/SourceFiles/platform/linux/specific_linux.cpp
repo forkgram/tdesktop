@@ -431,7 +431,7 @@ void InstallLauncher() {
 
 	const auto icon = icons + base::IconName() + u".png"_q;
 	QFile::remove(icon);
-	if (QFile::copy(u":/gui/art/forkgram/logo_256_no_margin.png"_q, icon)) {
+	if (QFile::copy(u":/gui/art/smfgram/logo_256_no_margin.png"_q, icon)) {
 		DEBUG_LOG(("App Info: Icon copied to '%1'").arg(icon));
 	}
 

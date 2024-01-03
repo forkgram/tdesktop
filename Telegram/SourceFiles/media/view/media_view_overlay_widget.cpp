@@ -1031,13 +1031,7 @@ QSize OverlayWidget::flipSizeByRotation(QSize size) const {
 }
 
 bool OverlayWidget::hasCopyMediaRestriction(bool skipPremiumCheck) const {
-	if (const auto story = _stories ? _stories->story() : nullptr) {
-		return skipPremiumCheck
-			? !story->canDownloadIfPremium()
-			: !story->canDownloadChecked();
-	}
-	return (_history && !_history->peer->allowsForwarding())
-		|| (_message && _message->forbidsSaving());
+	return false;
 }
 
 bool OverlayWidget::showCopyMediaRestriction(bool skipPRemiumCheck) {
@@ -5198,16 +5192,16 @@ void OverlayWidget::handleWheelEvent(not_null<QWheelEvent*> e) {
 		if (_verticalWheelDelta < 0) {
 			_verticalWheelDelta += step;
 			if (!e->modifiers().testFlag(Qt::ControlModifier)) {
-				zoomOut();
-			} else if (acceptForJump) {
 				moveToNext(1);
+			} else if (acceptForJump) {
+				zoomOut();
 			}
 		} else {
 			_verticalWheelDelta -= step;
 			if (!e->modifiers().testFlag(Qt::ControlModifier)) {
-				zoomIn();
-			} else if (acceptForJump) {
 				moveToNext(-1);
+			} else if (acceptForJump) {
+				zoomIn();
 			}
 		}
 	}

@@ -416,12 +416,11 @@ bool Story::canDownloadIfPremium() const {
 }
 
 bool Story::canDownloadChecked() const {
-	return _peer->isSelf()
-		|| (canDownloadIfPremium() && _peer->session().premium());
+	return true;
 }
 
 bool Story::canShare() const {
-	return _privacyPublic && !forbidsForward() && (pinned() || !expired());
+	return true;
 }
 
 bool Story::canDelete() const {

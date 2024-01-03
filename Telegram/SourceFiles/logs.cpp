@@ -385,7 +385,7 @@ void start() {
 		delete LogsData;
 		LogsData = nullptr;
 	}
-
+	LOG(("Hello, SMFgram is starting"));
 	LOG(("Launched version: %1, install beta: %2, alpha: %3, debug mode: %4"
 		).arg(AppVersion
 		).arg(Logs::b(cInstallBetaVersion())

@@ -6,8 +6,8 @@
     <file alias="art/logo_256.png">../../art/logo_256.png</file>
     <file alias="art/logo_256_square.png">../../art/logo_256_square.png</file>
     <file alias="art/logo_256_no_margin.png">../../art/logo_256_no_margin.png</file>
-    <file alias="art/forkgram/logo_256.png">../../art/forkgram/logo_256.png</file>
-    <file alias="art/forkgram/logo_256_no_margin.png">../../art/forkgram/logo_256_no_margin.png</file>
+    <file alias="art/smfgram/logo_256.png">../../art/smfgram/logo_256.png</file>
+    <file alias="art/smfgram/logo_256_no_margin.png">../../art/smfgram/logo_256_no_margin.png</file>
     <file alias="art/themeimage.jpg">../../art/themeimage.jpg</file>
     <file alias="art/dice_idle.tgs">../../art/dice_idle.tgs</file>
     <file alias="art/dart_idle.tgs">../../art/dart_idle.tgs</file>

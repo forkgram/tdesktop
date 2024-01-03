@@ -572,7 +572,7 @@ MainMenu::MainMenu(
 
 	_telegram->setMarkedText(Ui::Text::Link(
 		AppNameF.utf8(),
-		u"https://github.com/Forkgram/tdesktop"_q));
+		u"https://github.com/Sponge-Mountain-Federation/tdesktop"_q));
 	_telegram->setLinksTrusted();
 	_version->setMarkedText(
 		Ui::Text::Link(

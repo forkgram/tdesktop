@@ -403,7 +403,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_contacts_not_found" = "No contacts found";
 "lng_topics_not_found" = "No topics found.";
 "lng_dlg_search_for_messages" = "Search for messages";
-"lng_update_telegram" = "Update Telegram";
+"lng_update_telegram" = "Update SMFgram";
 "lng_dlg_search_in" = "Search messages in";
 "lng_dlg_search_from" = "From: {user}";
 
@@ -2978,7 +2978,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_upload_show_file" = "Show file";
 
 "lng_about_version" = "version {version}";
-"lng_about_text1" = "Unofficial free messaging app based on {api_link}\nfor speed and security.";
+"lng_about_text1" = "SMF official free messaging app based on {api_link}\nfor speed and security.";
 "lng_about_text1_api" = "Telegram API";
 "lng_about_text2" = "This software is licensed under {gpl_link} version 3.\nSource code is available on {github_link}.";
 "lng_about_text3" = "Visit {faq_link} for more info.";

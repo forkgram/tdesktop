@@ -29,7 +29,7 @@ namespace {
 
 rpl::producer<TextWithEntities> Text1() {
 	return rpl::single<TextWithEntities>({
-		.text = "Forkgram based on the Telegram Desktop." });
+		.text = "SMFgram based on the Telegram Desktop." });
 	return tr::lng_about_text1(
 		lt_api_link,
 		tr::lng_about_text1_api(
