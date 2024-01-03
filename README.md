@@ -1,4 +1,4 @@
-# Forkgram — Unofficial Telegram Messenger
+# SMFgram — SMF official Telegram Messenger
 ![image](https://user-images.githubusercontent.com/4051126/43634235-402a8b74-9714-11e8-85c0-8ceb0844a3b0.png)  
 Forkgram is the fork of the official Telegram Desktop application.  
 This fork does not fundamentally change the official client and adds only some useful small features.  
