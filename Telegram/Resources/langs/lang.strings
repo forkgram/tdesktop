@@ -2982,7 +2982,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_about_text1_api" = "Telegram API";
 "lng_about_text2" = "This software is licensed under {gpl_link} version 3.\nSource code is available on {github_link}.";
 "lng_about_text3" = "Visit {faq_link} for more info.";
-"lng_about_text3_faq" = "Telegram FAQ";
+"lng_about_text3_faq" = "SMFgram FAQ";
 "lng_about_done" = "Done";
 
 "lng_search_no_results" = "No messages found";
