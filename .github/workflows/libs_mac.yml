@@ -1,0 +1,41 @@
+name: Build Telegram Libraries
+
+on:
+  workflow_dispatch:
+    inputs:
+      telegram_repo:
+        description: 'Telegram repository (e.g., telegramdesktop/tdesktop)'
+        required: true
+        default: 'telegramdesktop/tdesktop'
+      branch:
+        description: 'Branch to build'
+        required: true
+        default: 'dev'
+
+jobs:
+  build-mac:
+    runs-on: macos-latest
+
+    env:
+      PREPARE_PATH: "Telegram/build/prepare/prepare.py"
+
+    steps:
+      - name: Get repository name.
+        run: echo "REPO_NAME=${GITHUB_REPOSITORY##*/}" >> $GITHUB_ENV
+
+      - name: Build Telegram macOS libraries
+        uses: ./
+        with:
+          user_repo: ${{ github.event.inputs.telegram_repo }}
+          branch: ${{ github.event.inputs.branch }}
+          cache_key: ${{ runner.OS }}-libs-${{ hashFiles(format('{0}/{1}', env.REPO_NAME, env.PREPARE_PATH)) }}
+          script_path: Telegram/build/prepare/mac.sh
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check build results
+        run: |
+          echo "Script exit code: ${{ steps.build.outputs.exit_code }}"
+          if [ -f "${{ steps.build.outputs.script_output }}" ]; then
+            echo "Build output:"
+            cat "${{ steps.build.outputs.script_output }}"
+          fi
