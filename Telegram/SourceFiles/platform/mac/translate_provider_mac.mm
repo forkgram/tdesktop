@@ -17,6 +17,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace Platform {
 namespace {
 
+[[nodiscard]] Ui::TranslateProviderError ParseErrorCode(
+		const char *errorUtf8) {
+	return !std::strcmp(errorUtf8, "local-language-pack-missing")
+		? Ui::TranslateProviderError::LocalLanguagePackMissing
+		: Ui::TranslateProviderError::Unknown;
+}
+
 class TranslateProvider final : public Ui::TranslateProvider
 , public base::has_weak_ptr {
 public:
@@ -27,20 +34,24 @@ public:
 	void request(
 			Ui::TranslateProviderRequest request,
 			LanguageId to,
-			Fn<void(std::optional<TextWithEntities>)> done) override {
+			Fn<void(Ui::TranslateProviderResult)> done) override {
 		if (request.text.text.isEmpty()) {
-			done(std::nullopt);
+			done(Ui::TranslateProviderResult{
+				.error = Ui::TranslateProviderError::Unknown,
+			});
 			return;
 		}
 		const auto text = request.text.text.toUtf8();
 		const auto target = to.twoLetterCode().toUtf8();
 		if (target.isEmpty()) {
-			done(std::nullopt);
+			done(Ui::TranslateProviderResult{
+				.error = Ui::TranslateProviderError::Unknown,
+			});
 			return;
 		}
 		struct CallbackContext {
 			base::weak_ptr<TranslateProvider> provider;
-			Fn<void(std::optional<TextWithEntities>)> done;
+			Fn<void(Ui::TranslateProviderResult)> done;
 		};
 		auto ownedContext = std::make_unique<CallbackContext>(CallbackContext{
 			.provider = base::make_weak(this),
@@ -55,27 +66,26 @@ public:
 					static_cast<CallbackContext*>(context));
 				auto done = std::move(guard->done);
 				const auto isAlive = (guard->provider.get() != nullptr);
-				auto translatedText = QString();
-				auto hasError = (resultUtf8 == nullptr);
+				auto result = Ui::TranslateProviderResult();
 				if (resultUtf8 != nullptr) {
-					translatedText = QString::fromUtf8(resultUtf8);
+					result.text = TextWithEntities{
+						.text = QString::fromUtf8(resultUtf8),
+					};
 					std::free(const_cast<char*>(resultUtf8));
 				}
 				if (errorUtf8 != nullptr) {
-					hasError = true;
+					result.error = ParseErrorCode(errorUtf8);
 					std::free(const_cast<char*>(errorUtf8));
+				} else if (!result.text.has_value()) {
+					result.error = Ui::TranslateProviderError::Unknown;
 				}
 				if (!isAlive) {
 					return;
 				}
 				crl::on_main([=,
 						done = std::move(done),
-						translatedText = std::move(translatedText)] {
-					done(hasError
-						? std::optional<TextWithEntities>()
-						: std::optional<TextWithEntities>(TextWithEntities{
-							.text = std::move(translatedText),
-						}));
+						result = std::move(result)] {
+					done(std::move(result));
 				});
 			});
 	}

@@ -28,7 +28,7 @@ public:
 	void request(
 			TranslateProviderRequest request,
 			LanguageId to,
-			Fn<void(std::optional<TextWithEntities>)> done) override {
+			Fn<void(TranslateProviderResult)> done) override {
 		using Flag = MTPmessages_TranslateText::Flag;
 		const auto flags = request.msgId
 			? (Flag::f_peer | Flag::f_id)
@@ -36,7 +36,9 @@ public:
 			? Flag::f_text
 			: Flag(0);
 		if (!flags) {
-			done(std::nullopt);
+			done(TranslateProviderResult{
+				.error = TranslateProviderError::Unknown,
+			});
 			return;
 		}
 		_api.request(MTPmessages_TranslateText(
@@ -58,12 +60,18 @@ public:
 			const auto &data = result.data();
 			const auto &list = data.vresult().v;
 			done(list.isEmpty()
-				? std::optional<TextWithEntities>()
-				: std::optional<TextWithEntities>(Api::ParseTextWithEntities(
-					&request.peer->session(),
-					list.front())));
+				? TranslateProviderResult{
+					.error = TranslateProviderError::Unknown,
+				}
+				: TranslateProviderResult{
+					.text = Api::ParseTextWithEntities(
+						&request.peer->session(),
+						list.front()),
+				});
 		}).fail([=](const MTP::Error &) {
-			done(std::nullopt);
+			done(TranslateProviderResult{
+				.error = TranslateProviderError::Unknown,
+			});
 		}).send();
 	}
 

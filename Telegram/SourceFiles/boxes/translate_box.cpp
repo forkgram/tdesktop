@@ -64,8 +64,25 @@ void TranslateBox(
 				state->to.current(),
 				crl::guard(box, [=](LanguageId id) { state->to = id; })));
 		},
-		.request = [=](LanguageId to, Fn<void(std::optional<TextWithEntities>)> done) {
-			state->provider->request(*request, to, std::move(done));
+		.request = [=](
+				LanguageId to,
+				Fn<void(TranslateBoxContentResult)> done) {
+			state->provider->request(
+				*request,
+				to,
+				[done = std::move(done)](TranslateProviderResult result) {
+					using ProviderError = TranslateProviderError;
+					using UiError = TranslateBoxContentError;
+					done(TranslateBoxContentResult{
+						.text = std::move(result.text),
+						.error = (result.error
+								== ProviderError::LocalLanguagePackMissing)
+							? UiError::LocalLanguagePackMissing
+							: (result.error == ProviderError::None)
+							? UiError::None
+							: UiError::Unknown,
+					});
+				});
 		},
 	});
 }

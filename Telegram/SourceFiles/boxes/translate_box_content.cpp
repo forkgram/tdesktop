@@ -86,7 +86,7 @@ void TranslateBoxContent(
 	const auto textContext = std::move(args.textContext);
 	const auto chooseTo = std::make_shared<Fn<void()>>(std::move(args.chooseTo));
 	const auto request = std::make_shared<
-		Fn<void(LanguageId, Fn<void(std::optional<TextWithEntities>)>)>>(
+		Fn<void(LanguageId, Fn<void(TranslateBoxContentResult)>)>>(
 			std::move(args.request));
 
 	auto to = std::move(args.to) | rpl::start_spawning(box->lifetime());
@@ -181,9 +181,12 @@ void TranslateBoxContent(
 	};
 	const auto state = box->lifetime().make_state<State>();
 
-	const auto showText = [=](std::optional<TextWithEntities> translatedText) {
-		auto value = translatedText.value_or(
-			tr::italic(tr::lng_translate_box_error(tr::now)));
+	const auto showText = [=](TranslateBoxContentResult result) {
+		using UiError = TranslateBoxContentError;
+		auto value = result.text.value_or(
+			tr::italic(((result.error == UiError::LocalLanguagePackMissing)
+				? tr::lng_translate_box_error_language_pack_not_installed
+				: tr::lng_translate_box_error)(tr::now)));
 		translated->entity()->setMarkedText(value, textContext);
 		translated->show(anim::type::instant);
 		loading->hide(anim::type::instant);
@@ -192,11 +195,11 @@ void TranslateBoxContent(
 		const auto requestId = ++state->requestId;
 		loading->show(anim::type::instant);
 		translated->hide(anim::type::instant);
-		(*request)(id, [=](std::optional<TextWithEntities> translatedText) {
+		(*request)(id, [=](TranslateBoxContentResult result) {
 			if (state->requestId != requestId) {
 				return;
 			}
-			showText(std::move(translatedText));
+			showText(std::move(result));
 		});
 	};
 	std::move(to) | rpl::on_next(send, box->lifetime());

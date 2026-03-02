@@ -15,6 +15,17 @@ struct MarkedContext;
 
 namespace Ui {
 
+enum class TranslateBoxContentError {
+	None = 0,
+	Unknown,
+	LocalLanguagePackMissing,
+};
+
+struct TranslateBoxContentResult {
+	std::optional<TextWithEntities> text;
+	TranslateBoxContentError error = TranslateBoxContentError::None;
+};
+
 class GenericBox;
 
 struct TranslateBoxContentArgs {
@@ -23,7 +34,7 @@ struct TranslateBoxContentArgs {
 	Text::MarkedContext textContext;
 	rpl::producer<LanguageId> to;
 	Fn<void()> chooseTo;
-	Fn<void(LanguageId, Fn<void(std::optional<TextWithEntities>)>)> request;
+	Fn<void(LanguageId, Fn<void(TranslateBoxContentResult)>)> request;
 };
 
 void TranslateBoxContent(
