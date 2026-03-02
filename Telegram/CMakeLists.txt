@@ -1239,6 +1239,8 @@ PRIVATE
     lang/translate_mtproto_provider.h
     lang/translate_provider.cpp
     lang/translate_provider.h
+    lang/translate_url_provider.cpp
+    lang/translate_url_provider.h
     layout/layout_document_generic_preview.cpp
     layout/layout_document_generic_preview.h
     layout/layout_item_base.cpp
