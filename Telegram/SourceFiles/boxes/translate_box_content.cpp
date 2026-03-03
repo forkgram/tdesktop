@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/effects/loading_element.h"
 #include "ui/layers/generic_box.h"
 #include "ui/painter.h"
+#include "ui/rect.h"
 #include "ui/power_saving.h"
 #include "ui/vertical_list.h"
 #include "ui/widgets/buttons.h"
@@ -84,14 +85,16 @@ void TranslateBoxContent(
 	const auto text = std::move(args.text);
 	const auto hasCopyRestriction = args.hasCopyRestriction;
 	const auto textContext = std::move(args.textContext);
-	const auto chooseTo = std::make_shared<Fn<void()>>(std::move(args.chooseTo));
+	const auto chooseTo = std::make_shared<Fn<void()>>(
+		std::move(args.chooseTo));
 	const auto request = std::make_shared<
 		Fn<void(LanguageId, Fn<void(TranslateBoxContentResult)>)>>(
 			std::move(args.request));
 
 	auto to = std::move(args.to) | rpl::start_spawning(box->lifetime());
 	const auto toTitle = rpl::duplicate(to) | rpl::map(LanguageName);
-	const auto toDirection = rpl::duplicate(to) | rpl::map([=](LanguageId id) {
+	const auto toDirection = rpl::duplicate(to) | rpl::map([=](
+			LanguageId id) {
 		return id.locale().textDirection() == Qt::RightToLeft;
 	});
 
@@ -133,11 +136,12 @@ void TranslateBoxContent(
 				width - show->width() - st::boxRowPadding.right(),
 				rect.y() + std::abs(lineHeight - show->height()) / 2);
 		}, show->lifetime());
-		original->entity()->heightValue(
-		) | rpl::filter([](int height) {
-			return height > 0;
-		}) | rpl::take(1) | rpl::on_next([=](int height) {
-			if (height > lineHeight) {
+		container->widthValue(
+		) | rpl::filter([](int width) {
+			return width > 0;
+		}) | rpl::take(1) | rpl::on_next([=](int width) {
+			if (original->entity()->textMaxWidth()
+				> (width - rect::m::sum::h(st::boxRowPadding))) {
 				show->show(anim::type::instant);
 			}
 		}, show->lifetime());
