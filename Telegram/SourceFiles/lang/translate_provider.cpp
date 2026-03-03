@@ -51,16 +51,16 @@ TranslateProviderRequest PrepareTranslateProviderRequest(
 		MsgId msgId,
 		TextWithEntities text) {
 	auto result = TranslateProviderRequest{
-		.peer = peer,
-		.msgId = IsServerMsgId(msgId) ? msgId : MsgId(),
+		.peerId = int64(peer->id.value),
+		.msgId = IsServerMsgId(msgId) ? msgId.bare : 0,
 		.text = std::move(text),
 	};
 	if (provider->supportsMessageId()) {
 		return result;
 	}
 	if (result.msgId) {
-		if (const auto item = peer->owner().message(peer, result.msgId)) {
-			result.text = item->originalText();
+		if (const auto i = peer->owner().message(peer, MsgId(result.msgId))) {
+			result.text = i->originalText();
 		}
 		result.msgId = 0;
 	}

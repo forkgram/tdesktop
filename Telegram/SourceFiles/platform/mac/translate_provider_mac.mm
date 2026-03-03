@@ -8,11 +8,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "platform/mac/translate_provider_mac.h"
 
 #include "base/weak_ptr.h"
+#include "spellcheck/platform/platform_language.h"
 #include "translate_provider_mac_swift_bridge.h"
-
-#include <cstdlib>
-#include <memory>
-#include <optional>
 
 namespace Platform {
 namespace {

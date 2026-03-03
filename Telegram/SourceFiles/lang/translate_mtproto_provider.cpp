@@ -9,8 +9,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "api/api_text_entities.h"
 #include "data/data_peer.h"
+#include "data/data_session.h"
 #include "main/main_session.h"
 #include "mtproto/sender.h"
+#include "spellcheck/platform/platform_language.h"
 
 namespace Ui {
 namespace {
@@ -18,7 +20,8 @@ namespace {
 class MTProtoTranslateProvider final : public TranslateProvider {
 public:
 	explicit MTProtoTranslateProvider(not_null<Main::Session*> session)
-	: _api(&session->mtp()) {
+	: _session(session)
+	, _api(&session->mtp()) {
 	}
 
 	[[nodiscard]] bool supportsMessageId() const override {
@@ -29,13 +32,18 @@ public:
 			TranslateProviderRequest request,
 			LanguageId to,
 			Fn<void(TranslateProviderResult)> done) override {
+		const auto msgId = MsgId(request.msgId);
+		const auto peerId = PeerId(PeerIdHelper(request.peerId));
+		const auto peer = msgId
+			? _session->data().peerLoaded(peerId)
+			: nullptr;
 		using Flag = MTPmessages_TranslateText::Flag;
-		const auto flags = request.msgId
+		const auto flags = msgId
 			? (Flag::f_peer | Flag::f_id)
 			: !request.text.text.isEmpty()
 			? Flag::f_text
 			: Flag(0);
-		if (!flags) {
+		if (!flags || (msgId && !peer)) {
 			done(TranslateProviderResult{
 				.error = TranslateProviderError::Unknown,
 			});
@@ -43,16 +51,16 @@ public:
 		}
 		_api.request(MTPmessages_TranslateText(
 			MTP_flags(flags),
-			request.msgId ? request.peer->input() : MTP_inputPeerEmpty(),
-			(request.msgId
-				? MTP_vector<MTPint>(1, MTP_int(request.msgId))
+			msgId ? peer->input() : MTP_inputPeerEmpty(),
+			(msgId
+				? MTP_vector<MTPint>(1, MTP_int(msgId.bare))
 				: MTPVector<MTPint>()),
-			(request.msgId
+			(msgId
 				? MTPVector<MTPTextWithEntities>()
 				: MTP_vector<MTPTextWithEntities>(1, MTP_textWithEntities(
 					MTP_string(request.text.text),
 					Api::EntitiesToMTP(
-						&request.peer->session(),
+						_session,
 						request.text.entities,
 						Api::ConvertOption::SkipLocal)))),
 			MTP_string(to.twoLetterCode())
@@ -65,7 +73,7 @@ public:
 				}
 				: TranslateProviderResult{
 					.text = Api::ParseTextWithEntities(
-						&request.peer->session(),
+						_session,
 						list.front()),
 				});
 		}).fail([=](const MTP::Error &) {
@@ -76,6 +84,7 @@ public:
 	}
 
 private:
+	const not_null<Main::Session*> _session;
 	MTP::Sender _api;
 
 };

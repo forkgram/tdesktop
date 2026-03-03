@@ -9,6 +9,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <translate_provider.h>
 
+class PeerData;
+struct MsgId;
+
 namespace Main {
 class Session;
 } // namespace Main
