@@ -41,8 +41,6 @@ photoEditorTextButtonPadding: margins(22px, 0px, 22px, 0px);
 photoEditorButtonStyle: TextStyle(semiboldTextStyle) {
 	font: font(14px semibold);
 }
-photoEditorButtonTextTop: 15px;
-
 photoEditorAbout: FlatLabel(defaultFlatLabel) {
 	textFg: mediaviewCaptionFg;
 	minWidth: 240px;
@@ -110,7 +108,6 @@ photoEditorColorButtonBorderFg: mediaviewCaptionFg;
 photoEditorColorPaletteItemSize: 20px;
 photoEditorColorPaletteGap: 6px;
 photoEditorColorPaletteSelectionWidth: 2px;
-photoEditorColorPaletteSelectionFg: mediaviewCaptionFg;
 photoEditorColorPalettePlusLine: 2px;
 photoEditorColorPalettePlusFg: mediaviewCaptionFg;
 
@@ -135,7 +132,6 @@ photoEditorBlurSizeMultiplier: 3.0;
 photoEditorBlurPreviewOpacity: 0.25;
 photoEditorBlurRadius: 20;
 
-photoEditorBrushSizeControlLeftSkip: 0px;
 photoEditorBrushSizeControlHeight: 280px;
 photoEditorBrushSizeControlCollapsedWidth: 2px;
 photoEditorBrushSizeControlExpandedTopWidth: 25px;
