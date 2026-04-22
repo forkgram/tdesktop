@@ -1,0 +1,12 @@
+name: Unused styles updater.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  Unused-styles:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: desktop-app/action_code_updater@master
+        with:
+          type: "unused-styles"
