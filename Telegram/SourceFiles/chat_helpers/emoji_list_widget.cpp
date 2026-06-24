@@ -54,7 +54,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/application.h"
 #include "settings/sections/settings_premium.h"
 #include "window/window_session_controller.h"
-#include "window/window_controller.h"
 #include "styles/style_chat_helpers.h"
 #include "styles/style_menu_icons.h"
 
@@ -492,6 +491,7 @@ EmojiListWidget::EmojiListWidget(
 , _mode(_onlyUnicodeEmoji ? Mode::Full : descriptor.mode)
 , _mediaPreviewParent(descriptor.mediaPreviewParent)
 , _mediaPreviewMargins(descriptor.mediaPreviewMargins)
+, _mediaPreviewPanelStyle(descriptor.mediaPreviewPanelStyle)
 , _api(&session().mtp())
 , _staticCount(_mode == Mode::Full ? kEmojiSectionCount : 1)
 , _premiumIcon(_mode == Mode::EmojiStatus
@@ -763,20 +763,21 @@ void EmojiListWidget::applyNextSearchQuery() {
 void EmojiListWidget::showPreview() {
 	if (const auto over = std::get_if<OverEmoji>(&_pressed)) {
 		if (const auto custom = lookupCustomEmoji(over)) {
-			showPreviewFor(custom.document);
-			_previewShown = true;
+			_previewShown = showPreviewFor(custom.document);
 		}
 	}
 }
 
-void EmojiListWidget::showPreviewFor(not_null<DocumentData*> document) {
+bool EmojiListWidget::showPreviewFor(not_null<DocumentData*> document) {
 	if ((_mode == Mode::FullReactions || _mode == Mode::RecentReactions)
 		&& _mediaPreviewParent) {
 		ensureMediaPreview();
-		_mediaPreview->showPreview(document->stickerSetOrigin(), document);
-	} else {
-		_show->showMediaPreview(document->stickerSetOrigin(), document);
+		if (_mediaPreview) {
+			_mediaPreview->showPreview(document->stickerSetOrigin(), document);
+			return true;
+		}
 	}
+	return _show->showMediaPreview(document->stickerSetOrigin(), document);
 }
 
 void EmojiListWidget::ensureMediaPreview() {
@@ -787,27 +788,24 @@ void EmojiListWidget::ensureMediaPreview() {
 		_mediaPreview->raise();
 		return;
 	}
-	const auto controller = Core::App().findWindow(_show->toastParent());
-	const auto sessionController = controller
-		? controller->sessionController()
-		: nullptr;
-	if (sessionController) {
-		const auto tooSmall = _mediaPreviewParent->height()
-			< st::emojiPanEmojiPreviewMinHeight;
+	if (const auto sessionController = _show->resolveWindow()) {
+		const auto tooSmall = _mediaPreviewPanelStyle
+			&& (_mediaPreviewParent->height()
+				< st::emojiPanEmojiPreviewMinHeight);
 		const auto parent = tooSmall
 			? sessionController->content()
 			: _mediaPreviewParent;
 		_mediaPreview = base::make_unique_q<Window::MediaPreviewWidget>(
 			parent,
 			sessionController);
-		if (!tooSmall) {
+		if (_mediaPreviewPanelStyle && !tooSmall) {
 			_mediaPreview->setCustomPadding(
 				st::emojiPanReactionsPreviewPadding);
 			_mediaPreview->setBackgroundMargins(_mediaPreviewMargins);
 			_mediaPreview->setCustomRadius(st::emojiPanEmojiPreviewRadius);
 		}
 		_mediaPreview->show();
-		_mediaPreview->setGeometry(parent->geometry());
+		_mediaPreview->setGeometry(parent->rect());
 		_mediaPreview->raise();
 	}
 }
@@ -3955,7 +3953,7 @@ void EmojiListWidget::setSelected(OverState newSelected) {
 		if (const auto over = std::get_if<OverEmoji>(&_selected)) {
 			if (const auto custom = lookupCustomEmoji(over)) {
 				_pressed = _selected;
-				showPreviewFor(custom.document);
+				_previewShown = showPreviewFor(custom.document);
 			}
 		}
 	}

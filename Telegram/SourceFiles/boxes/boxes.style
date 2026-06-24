@@ -169,6 +169,20 @@ contactsSortButton: IconButton(defaultIconButton) {
 contactsSortOnlineIcon: icon{{ "contacts_online", boxTitleCloseFg }};
 contactsSortOnlineIconOver: icon{{ "contacts_online", boxTitleCloseFgOver }};
 
+contactsSortHeaderHeight: 29px;
+contactsSortHeaderFont: font(13px);
+contactsSortHeaderPosition: point(16px, 7px);
+contactsSortHeaderFg: windowSubTextFg;
+
+peerListIndexWidth: 22px;
+peerListIndexApproach: 32px;
+peerListIndexSlotHeight: 15px;
+peerListIndexMinSlotHeight: 12px;
+peerListIndexVerticalInset: 10px;
+peerListIndexFont: font(bold 11px);
+peerListIndexFg: windowSubTextFg;
+peerListIndexActiveFg: windowActiveTextFg;
+
 membersMarginTop: 10px;
 membersMarginBottom: 10px;
 

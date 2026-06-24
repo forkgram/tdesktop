@@ -30,6 +30,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/ui_utility.h"
 #include "ui/widgets/elastic_scroll.h"
 #include "ui/widgets/fields/input_field.h"
+#include "ui/widgets/menu/menu_action.h"
+#include "ui/widgets/menu/menu_separator.h"
 #include "ui/widgets/popup_menu.h"
 #include "ui/widgets/scroll_area.h"
 
@@ -1740,11 +1742,6 @@ bool Widget::eventFilter(QObject *object, QEvent *event) {
 					|| handleFieldKey(keyEvent)) {
 					return true;
 				}
-			} else if (type == QEvent::ContextMenu) {
-				const auto context = static_cast<QContextMenuEvent*>(event);
-				if (handleFieldContextMenuEvent(object, context)) {
-					return true;
-				}
 			} else if ((type == QEvent::MouseButtonPress
 				|| type == QEvent::MouseMove
 				|| type == QEvent::MouseButtonRelease)
@@ -1893,48 +1890,46 @@ std::optional<PreparedEditTableCellSource> Widget::activeTableCellSourceAt(
 		: std::optional<PreparedEditTableCellSource>();
 }
 
-bool Widget::handleFieldContextMenuEvent(
-		QObject *object,
-		QContextMenuEvent *e) {
-	const auto cell = activeTableCellSourceAt(object, *e);
+void Widget::handleFieldContextMenuRequest(
+		Ui::InputField::ContextMenuRequest request) {
+	const auto cell = activeTableCellSourceAt(
+		_field->rawTextEdit().get(),
+		*request.event);
 	if (!cell) {
-		return false;
+		return;
 	}
 	const auto range = effectiveTableRangeForCell(*cell);
 	if (range.empty() || !_state->tableSelectionInfo(range).valid) {
-		return false;
+		return;
 	}
-	const auto raw = _field->rawTextEdit();
-	const auto menu = raw->createStandardContextMenu();
-	if (!menu) {
-		return false;
-	}
-	const auto before = menu->actions().empty()
-		? nullptr
-		: menu->actions().front();
-	const auto changeTable = new QAction(
-		tr::lng_article_table_change(tr::now),
-		menu);
-	menu->insertAction(before, changeTable);
-	menu->insertSeparator(before);
-	const auto setupPopupMenu = [=](not_null<Ui::PopupMenu*> popup) {
-		changeTable->setMenu(new QMenu(menu));
+	request.customizePopupMenu([=](not_null<Ui::PopupMenu*> popup) {
+		const auto popupMenu = popup->menu();
+		const auto action = new QAction(
+			tr::lng_article_table_change(tr::now),
+			popupMenu.get());
+		action->setMenu(new QMenu(popupMenu.get()));
+		popup->insertAction(
+			0,
+			base::make_unique_q<Ui::Menu::Action>(
+				popupMenu,
+				popupMenu->st(),
+				action,
+				nullptr,
+				nullptr));
+		const auto separator = new QAction(popupMenu.get());
+		separator->setSeparator(true);
+		popup->insertAction(
+			1,
+			base::make_unique_q<Ui::Menu::Separator>(
+				popupMenu,
+				popupMenu->st(),
+				popupMenu->st().separator,
+				separator));
 		const auto submenu = popup->ensureSubmenu(
-			changeTable,
+			action,
 			st::popupMenuWithIcons);
 		fillTableChangeMenu(submenu, range);
-	};
-	auto copied = std::make_shared<QContextMenuEvent>(
-		e->reason(),
-		e->pos(),
-		e->globalPos());
-	_fieldContextMenuRequests.fire({
-		.menu = menu,
-		.event = std::move(copied),
-		.setupPopupMenu = setupPopupMenu,
 	});
-	e->accept();
-	return true;
 }
 
 PreparedEditTableCellRange Widget::effectiveTableRangeForCell(
@@ -2939,7 +2934,10 @@ void Widget::setupInlineField() {
 	const auto raw = _field->rawTextEdit();
 	raw->installEventFilter(this);
 	raw->viewport()->installEventFilter(this);
-	_field->setExtendedContextMenu(_fieldContextMenuRequests.events());
+	_field->addContextMenuHook([this](
+			Ui::InputField::ContextMenuRequest request) {
+		handleFieldContextMenuRequest(std::move(request));
+	});
 
 	_field->heightChanges(
 	) | rpl::on_next([=] {

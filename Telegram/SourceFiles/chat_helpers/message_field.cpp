@@ -697,11 +697,12 @@ void InitSpellchecker(
 			tr::lng_settings_manage_dictionaries(tr::now),
 			[=] { show->showBox(Box<Ui::ManageDictionariesBox>(session)); }
 		});
-	const auto s = Ui::CreateChild<SpellingHighlighter>(
+	// The highlighter parents itself to the field's document and registers a
+	// context-menu hook on the field, so it keeps working without holding it.
+	Ui::CreateChild<SpellingHighlighter>(
 		field.get(),
 		Core::App().settings().spellcheckerEnabledValue(),
 		menuItem);
-	field->setExtendedContextMenu(s->contextMenuCreated());
 #endif // TDESKTOP_DISABLE_SPELLCHECK
 
 	// Add wrong keyboard layout fixer.

@@ -200,6 +200,9 @@ public:
 	void elementShowTooltip(
 		const TextWithEntities &text,
 		Fn<void()> hiddenCallback);
+	void elementShowHiddenSenderTooltip(
+		FullMsgId itemId,
+		const TextWithEntities &text);
 	bool elementAnimationsPaused();
 	void elementSendBotCommand(
 		const QString &command,

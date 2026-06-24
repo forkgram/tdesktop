@@ -381,7 +381,8 @@ SwipeBackResult SetupSwipeBack(
 		not_null<Ui::RpWidget*> widget,
 		Fn<std::pair<QColor, QColor>()> colors,
 		bool mirrored,
-		bool iconMirrored) {
+		bool iconMirrored,
+		Fn<int()> centerY) {
 	struct State {
 		base::unique_qptr<Ui::RpWidget> back;
 		SwipeContextData data;
@@ -493,20 +494,23 @@ SwipeBackResult SetupSwipeBack(
 				raw->show();
 				raw->raise();
 			}
+			const auto top = centerY
+				? (centerY() - state->back->height() / 2)
+				: ((widget->height() - state->back->height()) / 2);
 			if (!mirrored) {
 				state->back->moveToLeft(
 					anim::interpolate(
 						-st::swipeBackSize * kMaxOuterOffset,
 						maxOffset - st::swipeBackSize,
 						ratio),
-					(widget->height() - state->back->height()) / 2);
+					top);
 			} else {
 				state->back->moveToLeft(
 					anim::interpolate(
 						widget->width() + st::swipeBackSize * kMaxOuterOffset,
 						widget->width() - maxOffset,
 						ratio),
-					(widget->height() - state->back->height()) / 2);
+					top);
 			}
 			state->back->update();
 		} else if (state->back) {

@@ -102,7 +102,7 @@ jobs:
           echo "Decoded file info: $(file -b /tmp/updater_upload_check.zip)"
 
       - name: Clone.
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -143,14 +143,26 @@ jobs:
           tool-cache: true
 
       - name: Set up Docker Buildx.
+        id: setup-buildx
         uses: docker/setup-buildx-action@v4
 
       - name: Libraries cache.
+        id: cache-libs
         uses: actions/cache@v5
         with:
-          path: ${{ runner.temp }}/.buildx-cache
+          path: |
+            ${{ runner.temp }}/.buildx-cache
+            ${{ runner.temp }}/.mount-cache
           key: ${{ runner.OS }}-libs-${{ hashFiles('Telegram/build/docker/centos_env/**') }}
           restore-keys: ${{ runner.OS }}-libs-
+
+      - name: Restore Docker cache mounts.
+        uses: reproducible-containers/buildkit-cache-dance@5422eac04292c961a382e0f584ea0f03ad9da723
+        with:
+          builder: ${{ steps.setup-buildx.outputs.name }}
+          cache-dir: ${{ runner.temp }}/.mount-cache
+          dockerfile: Telegram/build/docker/centos_env/Dockerfile
+          skip-extraction: ${{ steps.cache-libs.outputs.cache-hit }}
 
       - name: Libraries.
         uses: docker/build-push-action@v7
@@ -166,6 +178,14 @@ jobs:
           rm -rf ${{ runner.temp }}/.buildx-cache
           mv ${{ runner.temp }}/.buildx-cache{-new,}
 
+      - name: Telegram Desktop cache.
+        if: env.ONLY_CACHE == 'false'
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/.tdesktop-cache
+          key: ${{ runner.OS }}-tdesktop-${{ matrix.defines || 'null' }}-${{ github.run_id }}
+          restore-keys: ${{ runner.OS }}-tdesktop-${{ matrix.defines || 'null' }}-
+
       - name: Telegram Desktop build.
         if: env.ONLY_CACHE == 'false'
         run: |
@@ -178,15 +198,24 @@ jobs:
             echo "ARTIFACT_NAME=Telegram" >> $GITHUB_ENV
           fi
 
+          mkdir -p ${{ runner.temp }}/.tdesktop-cache
+
           docker run --rm \
           -u $(id -u) \
           -v $PWD:/usr/src/tdesktop \
+          -v ${{ runner.temp }}/.tdesktop-cache:/var/cache/ccache \
+          -e CONFIG=Debug \
+          -e CCACHE_SLOPPINESS=pch_defines,time_macros \
           -v $PWD/../DesktopPrivate:/usr/src/DesktopPrivate \
           $IMAGE_TAG \
-          /usr/src/tdesktop/Telegram/build/docker/centos_env/build.sh \
+          env -u CCACHE_DISABLE /usr/src/tdesktop/Telegram/build/docker/centos_env/build.sh \
+          -D CMAKE_CONFIGURATION_TYPES=Debug \
+          -D CMAKE_C_FLAGS_DEBUG="-O0 -fpch-preprocess -fuse-ld=lld" \
+          -D CMAKE_CXX_FLAGS_DEBUG="-O0 -fpch-preprocess -fuse-ld=lld" \
+          -D CMAKE_COMPILE_WARNING_AS_ERROR=ON \
           -D TDESKTOP_API_ID=${{ secrets.API_ID }} \
           -D TDESKTOP_API_HASH=${{ secrets.API_HASH }} \
-          -D DESKTOP_APP_SPECIAL_TARGET=linux \
+          -D DESKTOP_APP_SPECIAL_TARGET=linux
           $DEFINE
 
           strip -s out/MinSizeRel/Forkgram

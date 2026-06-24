@@ -16,6 +16,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QElapsedTimer>
 
 #include <algorithm>
+#include <limits>
 #include <utility>
 
 namespace Iv::Markdown {
@@ -64,6 +65,16 @@ void ApplySoftPreparedBlockLimit(std::vector<PreparedBlock> *blocks) {
 	blocks->push_back(ContentTooLongBlock());
 }
 
+[[nodiscard]] int PositiveLimit(int value, int fallback) {
+	return (value > 0) ? value : fallback;
+}
+
+[[nodiscard]] int LimitProduct(int a, int b) {
+	return int(std::min<int64>(
+		int64(a) * b,
+		std::numeric_limits<int>::max()));
+}
+
 } // namespace
 
 const MarkdownPrepareLimits &PrepareLimitsForIv() {
@@ -72,6 +83,11 @@ const MarkdownPrepareLimits &PrepareLimitsForIv() {
 			.maxRows = 128,
 			.maxColumns = 20,
 			.maxCells = 1024,
+		},
+		.markdownTableRender = {
+			.maxRows = 1'000,
+			.maxColumns = 50,
+			.maxCells = 50'000,
 		},
 		.visualListDepth = 16,
 		.visualQuoteDepth = 16,
@@ -82,6 +98,25 @@ const MarkdownPrepareLimits &PrepareLimitsForIv() {
 
 const MarkdownPrepareTableRenderLimits &PrepareTableRenderLimitsForIv() {
 	return PrepareLimitsForIv().tableRender;
+}
+
+MarkdownPrepareTableRenderLimits PrepareTableRenderLimitsForRichMessage(
+		const RichMessageLimits &limits) {
+	const auto fallback = RichMessageLimits();
+	const auto maxRows = PositiveLimit(limits.maxBlocks, fallback.maxBlocks);
+	const auto maxColumns = PositiveLimit(
+		limits.maxTableCols,
+		fallback.maxTableCols);
+	return {
+		.maxRows = maxRows,
+		.maxColumns = maxColumns,
+		.maxCells = LimitProduct(maxRows, maxColumns),
+	};
+}
+
+auto PrepareMarkdownTableRenderLimitsForIv()
+-> const MarkdownPrepareTableRenderLimits & {
+	return PrepareLimitsForIv().markdownTableRender;
 }
 
 MarkdownArticleContent PrepareSynchronously(PrepareRequest request) {
@@ -137,6 +172,8 @@ NativeInstantViewPrepareResult TryPrepareNativeInstantView(
 	state.result.editMode = request.editMode;
 	state.dimensions = request.dimensionsOverride.value_or(
 		CaptureMarkdownPrepareDimensions());
+	state.tableRenderLimits = request.tableRenderLimits.value_or(
+		PrepareTableRenderLimitsForIv());
 	state.editMode = request.editMode;
 	const auto finish = [&](NativeInstantViewPrepareResultKind kind, QString reason) {
 		state.result.debug.prepareMs = int(timer.elapsed());
@@ -187,7 +224,8 @@ NativeInstantViewPrepareResult TryPrepareNativeInstantView(
 NativeInstantViewLeafUpdateResult UpdatePreparedNativeInstantViewLeaf(
 		MarkdownArticleContent *content,
 		const RichPage &page,
-		const PreparedEditLeafSource &source) {
+		const PreparedEditLeafSource &source,
+		std::optional<MarkdownPrepareTableRenderLimits> tableRenderLimits) {
 	if (!content) {
 		return NativeInstantViewLeafUpdateResult::Failed;
 	}
@@ -196,6 +234,8 @@ NativeInstantViewLeafUpdateResult UpdatePreparedNativeInstantViewLeaf(
 	state.result.editMode = content->editMode;
 	state.result.formulas = content->formulas;
 	state.dimensions = CaptureMarkdownPrepareDimensions();
+	state.tableRenderLimits = tableRenderLimits.value_or(
+		PrepareTableRenderLimitsForIv());
 	state.editMode = content->editMode;
 	state.nextFormulaIndex = int(content->formulas.size());
 	auto blocks = content->blocks.blocks;

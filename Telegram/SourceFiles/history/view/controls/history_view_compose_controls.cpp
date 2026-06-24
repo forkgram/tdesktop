@@ -18,6 +18,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/compose_ai_box.h"
 #include "boxes/edit_caption_box.h"
 #include "boxes/send_files_box.h"
+#include "boxes/send_gif_with_caption_box.h"
 #include "calls/group/ui/calls_group_stars_coloring.h"
 #include "calls/group/calls_group_stars_box.h"
 #include "chat_helpers/compose/compose_show.h"
@@ -2931,6 +2932,25 @@ void ComposeControls::initTabbedSelector() {
 			} else {
 				Data::InsertCustomEmoji(_field, data.document);
 			}
+		} else if (data.needsCaption && _history) {
+			const auto document = data.document;
+			const auto from = data.messageSendingFrom;
+			Ui::SendGifWithCaption(
+				_show,
+				_field,
+				document,
+				_history->peer,
+				sendMenuDetails(),
+				crl::guard(_field, [=](
+						Api::SendOptions options,
+						TextWithTags caption) {
+					_fileChosen.fire({
+						.document = document,
+						.options = options,
+						.messageSendingFrom = from,
+						.caption = std::move(caption),
+					});
+				}));
 		} else {
 			_fileChosen.fire(std::move(data));
 		}

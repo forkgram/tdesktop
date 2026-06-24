@@ -2197,6 +2197,50 @@ void ChatWidget::checkPinnedBarState() {
 		}
 	}, _pinnedBar->lifetime());
 
+	_pinnedBar->barRightClicks(
+	) | rpl::on_next([=] {
+		if (_pinnedBarHasCustomButton) {
+			return;
+		}
+		const auto reference = _pinnedClickedId
+			? _pinnedClickedId
+			: _pinnedTracker->currentMessageId().message;
+		if (!reference) {
+			return;
+		}
+		const auto top = Data::ResolveTopPinnedId(
+			_peer,
+			_repliesRootId,
+			_monoforumPeerId);
+		const auto targetId = (top && reference.msg >= top.msg)
+			? Data::ResolveMinPinnedId(
+				_peer,
+				_repliesRootId,
+				_monoforumPeerId)
+			: _pinnedTracker->nextPinnedId(reference.msg);
+		if (!targetId) {
+			return;
+		}
+		const auto jump = crl::guard(this, [=] {
+			const auto item = session().data().message(targetId);
+			if (!item) {
+				return;
+			}
+			showAtPosition(item->position());
+			_pinnedClickedId = FullMsgId();
+			_minPinnedId = std::nullopt;
+			updatePinnedViewer();
+		});
+		if (session().data().message(targetId)) {
+			jump();
+		} else {
+			session().api().requestMessageData(
+				session().data().peer(targetId.peer),
+				targetId.msg,
+				jump);
+		}
+	}, _pinnedBar->lifetime());
+
 	_pinnedBarHeight = 0;
 	_pinnedBar->heightValue(
 	) | rpl::on_next([=](int height) {
@@ -2243,6 +2287,7 @@ void ChatWidget::refreshPinnedBarButton(bool many, HistoryItem *item) {
 	};
 	auto customButton = CreatePinnedBarCustomButton(this, item, context);
 	if (customButton) {
+		_pinnedBarHasCustomButton = true;
 		struct State {
 			base::unique_qptr<Ui::PopupMenu> menu;
 		};
@@ -2259,6 +2304,7 @@ void ChatWidget::refreshPinnedBarButton(bool many, HistoryItem *item) {
 		_pinnedBar->setRightButton(std::move(customButton));
 		return;
 	}
+	_pinnedBarHasCustomButton = false;
 	const auto close = !many;
 	auto button = object_ptr<Ui::IconButton>(
 		this,

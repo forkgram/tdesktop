@@ -1779,7 +1779,6 @@ Element *ListWidget::lookupItemByY(int y) const {
 not_null<HistoryItem*> ListWidget::lookupItemByPoint(
 		QPoint point,
 		not_null<Element*> view) const {
-	point -= QPoint(SelectionViewOffset(this, view), 0);
 	return LookupItemByPoint(view, mapPointToItem(point, view));
 }
 
@@ -2060,6 +2059,27 @@ void ListWidget::elementShowTooltip(
 		Fn<void()> hiddenCallback) {
 	// Under the parent is supposed to be a scroll widget.
 	_topToast.show(parentWidget(), &session(), text, hiddenCallback);
+}
+
+void ListWidget::elementShowHiddenSenderTooltip(
+		FullMsgId itemId,
+		const TextWithEntities &text) {
+	const auto scroll = _delegate->listScrollArea();
+	if (!scroll) {
+		return;
+	}
+	auto area = QRect();
+	if (const auto view = viewForItem(itemId)) {
+		if (const auto tooltip = view->Get<HiddenSenderTooltip>()) {
+			const auto local = tooltip->linkRect;
+			if (!local.isEmpty()) {
+				area = QRect(
+					mapToGlobal(QPoint(local.x(), itemTop(view) + local.y())),
+					local.size());
+			}
+		}
+	}
+	_hiddenSenderTooltip.show(scroll, area, text);
 }
 
 bool ListWidget::elementAnimationsPaused() {
@@ -2818,36 +2838,22 @@ TextForMimeData ListWidget::getSelectedText() const {
 		return _selectedText;
 	}
 
-	auto groups = base::flat_set<not_null<const Data::Group*>>();
-	auto fullSize = 0;
-	auto texts = std::vector<std::pair<
-		not_null<HistoryItem*>,
-		TextForMimeData>>();
-	texts.reserve(selected.size());
-
-	const auto wrapItem = [&](
-			not_null<HistoryItem*> item,
-			TextForMimeData &&unwrapped) {
-		auto time = QString("[%1] ").arg(
-			QLocale().toString(ItemDateTime(item), QLocale::ShortFormat));
-		auto part = TextForMimeData();
-		auto size = time.size()
-			+ item->author()->name().size()
-			+ 2
-			+ unwrapped.expanded.size();
-		part.reserve(size);
-		part.append(time).append(item->author()->name()).append(u": "_q);
-		part.append(std::move(unwrapped));
-		texts.emplace_back(std::move(item), std::move(part));
-		fullSize += size;
+	const auto richContext = (selected.size() > 1);
+	struct CopyEntry {
+		not_null<HistoryItem*> item;
+		const Data::Group *group = nullptr;
 	};
+	auto groups = base::flat_set<not_null<const Data::Group*>>();
+	auto entries = std::vector<CopyEntry>();
+	entries.reserve(selected.size());
+
 	const auto addItem = [&](not_null<HistoryItem*> item) {
-		wrapItem(item, HistoryItemText(item));
+		entries.push_back({ item, nullptr });
 	};
 	const auto addGroup = [&](not_null<const Data::Group*> group) {
 		Expects(!group->items.empty());
 
-		wrapItem(group->items.back(), HistoryGroupText(group));
+		entries.push_back({ group->items.back(), group.get() });
 	};
 
 	for (const auto &[itemId, data] : selected) {
@@ -2867,17 +2873,29 @@ TextForMimeData ListWidget::getSelectedText() const {
 			}
 		}
 	}
-	ranges::sort(texts, [&](
-			const std::pair<not_null<HistoryItem*>, TextForMimeData> &a,
-			const std::pair<not_null<HistoryItem*>, TextForMimeData> &b) {
-		return _delegate->listIsLessInOrder(a.first, b.first);
+	ranges::sort(entries, [&](const CopyEntry &a, const CopyEntry &b) {
+		return _delegate->listIsLessInOrder(a.item, b.item);
 	});
 
 	auto result = TextForMimeData();
 	auto sep = u"\n"_q;
-	result.reserve(fullSize + (texts.size() - 1) * sep.size());
-	for (auto i = begin(texts), e = end(texts); i != e;) {
-		result.append(std::move(i->second));
+	for (auto i = begin(entries), e = end(entries); i != e;) {
+		auto body = TextForMimeData();
+		if (i->group) {
+			const auto group = not_null<const Data::Group*>{ i->group };
+			body = richContext
+				? HistoryGroupTextForSelectedCopy(group)
+				: HistoryGroupText(group);
+		} else {
+			body = richContext
+				? HistoryItemTextForSelectedCopy(i->item)
+				: HistoryItemText(i->item);
+		}
+		auto part = HistorySelectedItemWrappedText(
+			i->item,
+			std::move(body),
+			richContext);
+		result.append(std::move(part));
 		if (++i != e) {
 			result.append(sep);
 		}
@@ -4224,9 +4242,6 @@ void ListWidget::mouseActionUpdate() {
 		? replyBtnView
 		: strictFindItemByY(point.y());
 	const auto item = view ? view->data().get() : nullptr;
-	if (view) {
-		point -= QPoint(SelectionViewOffset(this, view), 0);
-	}
 	const auto itemPoint = mapPointToItem(point, view);
 	_overState = MouseState(
 		item ? item->fullId() : FullMsgId(),
@@ -4884,7 +4899,8 @@ QPoint ListWidget::mapPointToItem(
 	if (!view) {
 		return QPoint();
 	}
-	return point - QPoint(0, itemTop(view));
+	return point
+		- QPoint(SelectionViewOffset(this, view), itemTop(view));
 }
 
 rpl::producer<FullMsgId> ListWidget::editMessageRequested() const {

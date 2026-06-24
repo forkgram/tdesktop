@@ -65,6 +65,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_poll.h"
 #include "data/data_replies_list.h"
 #include "data/data_chat_filters.h"
+#include "dialogs/dialogs_entry.h"
+#include "dialogs/dialogs_row.h"
+#include "base/options.h"
 #include "data/data_send_action.h"
 #include "data/data_message_reactions.h"
 #include "data/data_emoji_statuses.h"
@@ -283,6 +286,12 @@ Session::Session(not_null<Main::Session*> session)
 	_chatsList.unreadStateChanges(
 	) | rpl::on_next([=] {
 		notifyUnreadBadgeChanged();
+	}, _lifetime);
+
+	base::options::lookup<bool>(
+		Dialogs::kOptionDialogsUnreadOnTop
+	).changes() | rpl::on_next([=] {
+		refreshChatListUnreadOnTop();
 	}, _lifetime);
 
 	_chatsFilters->changed(
@@ -5288,6 +5297,22 @@ void Session::refreshChatListEntry(Dialogs::Key key) {
 		//		broadcast->updateFull();
 		//	}
 		//}
+	}
+}
+
+void Session::refreshChatListUnreadOnTop() {
+	auto entries = std::vector<not_null<Dialogs::Entry*>>();
+	const auto collect = [&](not_null<Dialogs::MainList*> list) {
+		for (const auto &row : list->indexed()->all()) {
+			entries.push_back(row->entry());
+		}
+	};
+	collect(&_chatsList);
+	if (const auto folder = folderLoaded(Data::Folder::kId)) {
+		collect(folder->chatsList());
+	}
+	for (const auto &entry : entries) {
+		entry->updateChatListSortPosition();
 	}
 }
 

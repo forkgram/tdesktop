@@ -399,8 +399,9 @@ void MarkTableSlots(
 	return result;
 }
 
-[[nodiscard]] TableGrid BuildTableGrid(const Block &table) {
-	const auto &limits = Markdown::PrepareTableRenderLimitsForIv();
+[[nodiscard]] TableGrid BuildTableGrid(
+		const Block &table,
+		const Markdown::MarkdownPrepareTableRenderLimits &limits) {
 	auto result = TableGrid();
 	result.rowCount = std::min(int(table.tableRows.size()), limits.maxRows);
 	if (result.rowCount < 0) {
@@ -763,6 +764,11 @@ const RichPage &State::richPage() const {
 
 const Markdown::MarkdownArticleContent &State::prepared() const {
 	return _prepared;
+}
+
+auto State::tableRenderLimits() const
+-> Markdown::MarkdownPrepareTableRenderLimits {
+	return Markdown::PrepareTableRenderLimitsForRichMessage(_limits);
 }
 
 template <typename Result, typename Callback>
@@ -1272,7 +1278,7 @@ State::TableSelectionInfo State::tableSelectionInfo(
 	if (!owner || owner->kind != BlockKind::Table) {
 		return {};
 	}
-	const auto grid = BuildTableGrid(*owner);
+	const auto grid = BuildTableGrid(*owner, tableRenderLimits());
 	const auto selected = SelectedTableGridCells(grid, *validated);
 	if (selected.empty()) {
 		return {};
@@ -1341,7 +1347,7 @@ State::tableContextRangeForSelection(
 	if (!owner || owner->kind != BlockKind::Table) {
 		return std::nullopt;
 	}
-	const auto grid = BuildTableGrid(*owner);
+	const auto grid = BuildTableGrid(*owner, tableRenderLimits());
 	if (grid.rowCount <= 0 || grid.columnCount <= 0) {
 		return std::nullopt;
 	}
@@ -1422,7 +1428,9 @@ bool State::canRemoveStructuralSelection(
 		if (!owner || owner->kind != BlockKind::Table) {
 			return false;
 		}
-		return TableGridRangeSpansAllRows(BuildTableGrid(*owner), *range);
+		return TableGridRangeSpansAllRows(
+			BuildTableGrid(*owner, tableRenderLimits()),
+			*range);
 	}
 	case PreparedEditSelectionKind::None:
 		return false;
@@ -1497,7 +1505,7 @@ bool State::addTableRowUnchecked(
 		return false;
 	}
 	const auto insertAt = after ? validated->rowTill : validated->rowFrom;
-	const auto grid = BuildTableGrid(*owner);
+	const auto grid = BuildTableGrid(*owner, tableRenderLimits());
 	if (insertAt < 0 || insertAt > int(owner->tableRows.size())) {
 		return false;
 	}
@@ -1570,7 +1578,7 @@ bool State::addTableColumnUnchecked(
 	const auto insertAt = after
 		? validated->columnTill
 		: validated->columnFrom;
-	const auto grid = BuildTableGrid(*owner);
+	const auto grid = BuildTableGrid(*owner, tableRenderLimits());
 	const auto sourceColumn = after
 		? validated->columnTill - 1
 		: validated->columnFrom;
@@ -1623,7 +1631,7 @@ bool State::setTableHeader(
 		return false;
 	}
 	const auto selected = SelectedTableGridCells(
-		BuildTableGrid(*owner),
+		BuildTableGrid(*owner, tableRenderLimits()),
 		*validated);
 	if (selected.empty()) {
 		return false;
@@ -1655,7 +1663,7 @@ bool State::setTableAlignment(
 		return false;
 	}
 	const auto selected = SelectedTableGridCells(
-		BuildTableGrid(*owner),
+		BuildTableGrid(*owner, tableRenderLimits()),
 		*validated);
 	if (selected.empty()) {
 		return false;
@@ -1687,7 +1695,7 @@ bool State::setTableVerticalAlignment(
 		return false;
 	}
 	const auto selected = SelectedTableGridCells(
-		BuildTableGrid(*owner),
+		BuildTableGrid(*owner, tableRenderLimits()),
 		*validated);
 	if (selected.empty()) {
 		return false;
@@ -1717,7 +1725,7 @@ bool State::splitTableCell(
 	if (!owner || owner->kind != BlockKind::Table) {
 		return false;
 	}
-	const auto grid = BuildTableGrid(*owner);
+	const auto grid = BuildTableGrid(*owner, tableRenderLimits());
 	const auto selected = SelectedTableGridCells(grid, *validated);
 	if (selected.size() != 1) {
 		return false;
@@ -1766,7 +1774,7 @@ bool State::uniteTableCells(
 	if (!owner || owner->kind != BlockKind::Table) {
 		return false;
 	}
-	const auto grid = BuildTableGrid(*owner);
+	const auto grid = BuildTableGrid(*owner, tableRenderLimits());
 	const auto selected = SelectedTableGridCells(grid, *validated);
 	if (selected.size() <= 1
 		|| !CleanTableGridUniteRange(grid, *validated)) {
@@ -1828,7 +1836,9 @@ bool State::removeTableRows(
 	if (!owner || owner->kind != BlockKind::Table) {
 		return false;
 	}
-	if (!TableGridRangeSpansAllColumns(BuildTableGrid(*owner), *validated)) {
+	if (!TableGridRangeSpansAllColumns(
+			BuildTableGrid(*owner, tableRenderLimits()),
+			*validated)) {
 		return false;
 	}
 	return removeStructuralSelection({
@@ -1851,7 +1861,9 @@ bool State::removeTableColumns(
 	if (!owner || owner->kind != BlockKind::Table) {
 		return false;
 	}
-	if (!TableGridRangeSpansAllRows(BuildTableGrid(*owner), *validated)) {
+	if (!TableGridRangeSpansAllRows(
+			BuildTableGrid(*owner, tableRenderLimits()),
+			*validated)) {
 		return false;
 	}
 	return removeStructuralSelection({
@@ -1870,7 +1882,9 @@ bool State::removeTable(
 	if (!owner || owner->kind != BlockKind::Table) {
 		return false;
 	}
-	if (!TableGridRangeCoversFullTable(BuildTableGrid(*owner), *validated)) {
+	if (!TableGridRangeCoversFullTable(
+			BuildTableGrid(*owner, tableRenderLimits()),
+			*validated)) {
 		return false;
 	}
 	return removeStructuralSelection({
@@ -2424,7 +2438,7 @@ std::optional<int> State::removeStructuralSelection(
 		if (!owner || owner->kind != BlockKind::Table) {
 			return std::nullopt;
 		}
-		const auto grid = BuildTableGrid(*owner);
+		const auto grid = BuildTableGrid(*owner, tableRenderLimits());
 		if (!TableGridRangeSpansAllRows(grid, *range)) {
 			return std::nullopt;
 		}
@@ -2782,7 +2796,7 @@ std::optional<State::StructuralTableCellRange> State::validateTableCellRange(
 	if (!owner || owner->kind != BlockKind::Table) {
 		return std::nullopt;
 	}
-	const auto grid = BuildTableGrid(*owner);
+	const auto grid = BuildTableGrid(*owner, tableRenderLimits());
 	if (range.rowFrom < 0
 		|| range.rowTill > grid.rowCount
 		|| range.columnFrom < 0
@@ -2854,7 +2868,9 @@ std::optional<State::LeafPath> State::firstSelectedLeaf(
 	if (!owner || owner->kind != BlockKind::Table) {
 		return std::nullopt;
 	}
-	const auto selected = SelectedTableGridCells(BuildTableGrid(*owner), range);
+	const auto selected = SelectedTableGridCells(
+		BuildTableGrid(*owner, tableRenderLimits()),
+		range);
 	for (const auto &descriptor : _textNodes) {
 		const auto &leaf = descriptor.leaf;
 		if (leaf.block != range.block
@@ -2949,7 +2965,7 @@ std::optional<State::LeafPath> State::adjacentLeafOutsideRange(
 	if (!owner || owner->kind != BlockKind::Table) {
 		return std::nullopt;
 	}
-	const auto grid = BuildTableGrid(*owner);
+	const auto grid = BuildTableGrid(*owner, tableRenderLimits());
 	const auto leafIntersectsRange = [&](const LeafPath &leaf) {
 		if (leaf.block != range.block
 			|| leaf.kind != LeafKind::TableCellText) {
@@ -4646,7 +4662,8 @@ bool State::updatePreparedActiveLeaf(
 	return (Markdown::UpdatePreparedNativeInstantViewLeaf(
 		&_prepared,
 		*_richPage,
-		*source) == NativeInstantViewLeafUpdateResult::Updated);
+		*source,
+		tableRenderLimits()) == NativeInstantViewLeafUpdateResult::Updated);
 }
 
 void State::rebuild() {
@@ -4663,6 +4680,7 @@ void State::rebuildPrepared() {
 	_prepared = Markdown::TryPrepareNativeInstantView({
 		.richPage = _richPage,
 		.mediaRuntime = _mediaRuntime,
+		.tableRenderLimits = tableRenderLimits(),
 		.editMode = true,
 	}).content;
 }

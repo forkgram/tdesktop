@@ -1334,7 +1334,7 @@ void ClearPreparedEditSources(std::vector<PreparedBlock> *blocks) {
 		ApplyNativeIvEditPlaceholderText(&block);
 	}
 
-	const auto &limits = PrepareTableRenderLimitsForIv();
+	const auto &limits = state->tableRenderLimits;
 	const auto rowCount = std::min(int(data.tableRows.size()), limits.maxRows);
 	auto occupancy = NativeIvTableOccupancyGrid(rowCount);
 	block.tableRows.reserve(rowCount);

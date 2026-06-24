@@ -65,6 +65,12 @@ struct PsaTooltipState : RuntimeComponent<PsaTooltipState, Element> {
 	mutable bool buttonVisible = true;
 };
 
+struct HiddenSenderTooltip
+: RuntimeComponent<HiddenSenderTooltip, Element> {
+	mutable QRect linkRect;
+	mutable int cachedWidth = -1;
+};
+
 struct InstantViewMediaRuntime
 : RuntimeComponent<InstantViewMediaRuntime, Element> {
 	QString pageUrl;

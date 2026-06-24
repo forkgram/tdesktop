@@ -208,7 +208,8 @@ Selector::Selector(
 	Fn<void(bool fast)> close,
 	IconFactory iconFactory,
 	Fn<bool()> paused,
-	bool child)
+	bool child,
+	QWidget *mediaPreviewParent)
 : Selector(
 	parent,
 	st,
@@ -224,7 +225,8 @@ Selector::Selector(
 	std::move(iconFactory),
 	std::move(paused),
 	std::move(close),
-	child) {
+	child,
+	mediaPreviewParent) {
 }
 
 #if 0 // not ready
@@ -261,7 +263,8 @@ Selector::Selector(
 	IconFactory iconFactory,
 	Fn<bool()> paused,
 	Fn<void(bool fast)> close,
-	bool child)
+	bool child,
+	QWidget *mediaPreviewParent)
 : RpWidget(parent)
 , _st(st)
 , _show(std::move(show))
@@ -269,6 +272,7 @@ Selector::Selector(
 , _recent(std::move(recent))
 , _listMode(mode)
 , _paused(std::move(paused))
+, _mediaPreviewParent(mediaPreviewParent)
 , _jumpedToPremium([=] { close(false); })
 , _cachedRound(
 	QSize(2 * st::reactStripSkip + st::reactStripSize, st::reactStripHeight),
@@ -1103,8 +1107,11 @@ void Selector::createList() {
 			.customRecentFactory = _unifiedFactoryOwner->factory(),
 			.freeEffects = std::move(freeEffects),
 			.st = st,
-			.mediaPreviewParent = this,
+			.mediaPreviewParent = _mediaPreviewParent
+				? _mediaPreviewParent
+				: this,
 			.mediaPreviewMargins = marginsForShadow(),
+			.mediaPreviewPanelStyle = (_mediaPreviewParent == nullptr),
 		}));
 	if (!_reactions.stickers.empty()) {
 		auto descriptors = ranges::views::all(

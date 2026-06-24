@@ -1180,6 +1180,26 @@ historyToDownBadgeSize: 22px;
 historyToDownShownAfter: 480px;
 historyToDownDuration: 150;
 
+historyPullNextThreshold: 110px;
+historyPullNextMaxHeight: 150px;
+historyPullNextAvatar: 56px;
+historyPullNextSkip: 8px;
+historyPullNextArrowStroke: 2px;
+historyPullNextBadge: 20px;
+historyPullNextBadgeRing: 2px;
+historyPullNextInset: 16px;
+historyPullNextPadding: 4px;
+historyPullNextArrowSize: 24px;
+historyPullNextArrowRaise: 20px;
+historyPullNextRise: 36px;
+historyPullNextNameTop: 20px;
+historyPullNextNameRadius: 15px;
+historyPullNextHintSlide: 10px;
+historyPullNextBounce: 4px;
+historyPullNextBadgeFont: font(12px semibold);
+historyPullNextNameFont: font(13px semibold);
+historyPullNextHintFont: font(14px);
+
 dialogsToUpAbove: icon {{ "history_down_arrow-flip_vertical", historyToDownFg, point(0px, 1px) }};
 dialogsToUpAboveOver: icon {{ "history_down_arrow-flip_vertical", historyToDownFgOver, point(0px, 1px) }};
 

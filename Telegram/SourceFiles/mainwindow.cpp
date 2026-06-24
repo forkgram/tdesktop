@@ -489,6 +489,7 @@ void MainWindow::clearPasscodeLock() {
 
 void MainWindow::setupIntro(
 		Intro::EnterPoint point,
+		Main::Account *accountBeforeIntro,
 		QPixmap oldContentCache) {
 	auto animated = (_main || _passcodeLock || _setupEmailLock);
 
@@ -497,7 +498,8 @@ void MainWindow::setupIntro(
 		bodyWidget(),
 		&controller(),
 		&account(),
-		point);
+		point,
+		accountBeforeIntro);
 	created->showSettingsRequested(
 	) | rpl::on_next([=] {
 		showSettings();

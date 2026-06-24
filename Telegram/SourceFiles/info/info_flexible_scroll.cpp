@@ -243,7 +243,16 @@ void FlexibleScrollHelper::setupScrollHandlingWithFilter() {
 		const auto wheel = static_cast<QWheelEvent*>(e.get());
 		const auto delta = wheel->angleDelta().y();
 		if (std::abs(delta) != 120 || (wheel->phase() != Qt::NoScrollPhase)) {
-			scrollToY(_scroll->scrollTop() - delta);
+			if (_scrollAnimation.animating()) {
+				_scrollAnimation.stop();
+				_scrollTopFrom = 0;
+				_scrollTopTo = 0;
+				_timeOffset = 0;
+				_lastScrollApplied = 0;
+			}
+			const auto pixels = wheel->pixelDelta().y();
+			_scroll->scrollToY(_scroll->scrollTop()
+				- (pixels ? pixels : delta));
 			return base::EventFilterResult::Cancel;
 		}
 		const auto actualTop = _scroll->scrollTop();

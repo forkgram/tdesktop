@@ -480,6 +480,8 @@ private:
 	[[nodiscard]] auto convertPreparedLeafSource(
 		const TextNodeDescriptor &descriptor) const
 	-> std::optional<Markdown::PreparedEditLeafSource>;
+	[[nodiscard]] auto tableRenderLimits() const
+	-> Markdown::MarkdownPrepareTableRenderLimits;
 
 	void rebuild();
 	void rebuildPrepared();

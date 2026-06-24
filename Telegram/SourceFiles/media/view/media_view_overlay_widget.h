@@ -19,6 +19,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "media/stories/media_stories_delegate.h"
 #include "media/view/media_view_playback_controls.h"
 #include "media/view/media_view_open_common.h"
+#include "media/view/media_view_recognition_selection.h"
 #include "media/media_common.h"
 #include "platform/platform_text_recognition.h"
 
@@ -226,6 +227,8 @@ private:
 	bool handleDoubleClick(QPoint position, Qt::MouseButton button);
 	bool handleTouchEvent(not_null<QTouchEvent*> e);
 	void handleWheelEvent(not_null<QWheelEvent*> e);
+	bool handleNativeGesture(not_null<QNativeGestureEvent*> e);
+	void setupSwipeNavigation();
 	void handleKeyPress(not_null<QKeyEvent*> e);
 	void handleKeyRelease(not_null<QKeyEvent*> e);
 
@@ -297,8 +300,12 @@ private:
 	void draw();
 	void receiveMouse();
 	void showAttachedStickers();
+
 	[[nodiscard]] auto scaledRecognitionRect(QPoint position)
 	const -> std::optional<Platform::TextRecognition::RectWithText>;
+	void updateRecognitionSelection(QPoint position);
+	void clearRecognitionSelection();
+	bool copyRecognitionSelection();
 	void showDropdown();
 	void handleTouchTimer();
 	void handleDocumentClick();
@@ -659,6 +666,8 @@ private:
 	int _groupThumbsLeft = 0;
 	int _groupThumbsTop = 0;
 	Ui::Text::String _caption;
+	Ui::Text::QuotePaintCache _captionPreCache;
+	Ui::Text::QuotePaintCache _captionBlockquoteCache;
 	QRect _captionRect;
 	ClickHandlerPtr _captionExpandLink;
 	int _captionShowMoreWidth = 0;
@@ -832,13 +841,18 @@ private:
 	rpl::event_stream<bool> _touchbarFullscreenToggled;
 
 	int _verticalWheelDelta = 0;
+	float64 _pinchZoomAccumulated = 0.;
+	bool _zoomAtLimit = false;
+	bool _swipeNavigating = false;
 
 	Platform::TextRecognition::Result _recognitionResult;
 	uint64 _recognitionPendingSessionUniqueId = 0;
 	PhotoId _recognitionPendingPhotoId = 0;
+	DocumentId _recognitionPendingDocumentId = 0;
 	bool _recognitionRetryOnLarge = false;
 	bool _showRecognitionResults = false;
 	Ui::Animations::Simple _recognitionAnimation;
+	RecognitionSelection _recognition;
 
 	bool _themePreviewShown = false;
 	uint64 _themePreviewId = 0;

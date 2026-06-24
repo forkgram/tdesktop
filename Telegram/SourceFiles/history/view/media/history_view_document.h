@@ -148,6 +148,10 @@ private:
 		Painter &p,
 		const PaintContext &context,
 		LayoutMode mode) const;
+	void paintPlaybackBlobs(
+		Painter &p,
+		const PaintContext &context,
+		QRect inner) const;
 	[[nodiscard]] TextState cornerDownloadTextState(
 		QPoint point,
 		StateRequest request,

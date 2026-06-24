@@ -371,9 +371,8 @@ private:
 		const Markdown::PreparedEditHit &editHit);
 	void finishArticleSelection();
 	[[nodiscard]] bool handleStructuralSelectionKey(QKeyEvent *e);
-	[[nodiscard]] bool handleFieldContextMenuEvent(
-		QObject *object,
-		QContextMenuEvent *e);
+	void handleFieldContextMenuRequest(
+		Ui::InputField::ContextMenuRequest request);
 	[[nodiscard]] bool handleFieldMouseEvent(QEvent *event);
 	[[nodiscard]] bool handleHorizontalScrollWheel(
 		QWheelEvent *e,
@@ -415,8 +414,6 @@ private:
 	std::shared_ptr<style::Markdown> _articleStyle;
 	std::shared_ptr<Markdown::MarkdownArticle> _article;
 	base::unique_qptr<Ui::InputField> _field;
-	rpl::event_stream<Ui::InputField::ExtendedContextMenu>
-		_fieldContextMenuRequests;
 	std::unique_ptr<Ui::ChatTheme> _theme;
 	std::unique_ptr<Ui::ChatStyle> _style;
 	std::vector<Ui::Text::SpecialColor> _highlightColors;

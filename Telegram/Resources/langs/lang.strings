@@ -1383,7 +1383,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_settings_faq_link" = "https://telegram.org/faq#general-questions";
 "lng_settings_features" = "Telegram Features";
 "lng_settings_credits" = "My Stars";
-"lng_settings_currency" = "My TON";
+"lng_settings_currency" = "My Grams";
 "lng_settings_logout" = "Log out";
 "lng_sure_logout" = "Are you sure you want to log out?";
 
@@ -1726,6 +1726,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_profile_direct_messages" = "Direct messages";
 "lng_profile_join_channel" = "Join Channel";
 "lng_profile_join_group" = "Join Group";
+
+"lng_pull_next_channel" = "Pull up to go to the next unread channel";
+"lng_release_next_channel" = "Release to go to the next unread channel";
+"lng_pull_no_unread_channels" = "You have no unread channels";
+
 "lng_profile_apply_to_join_group" = "Apply to Join Group";
 "lng_profile_kick" = "Remove";
 "lng_profile_delete_removed" = "Delete";
@@ -1903,6 +1908,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_profile_action_short_leave" = "Leave";
 "lng_profile_action_short_more" = "More";
 "lng_profile_action_short_manage" = "Manage";
+"lng_profile_action_short_live_stream" = "Live stream";
+"lng_profile_action_short_video_chat" = "Video chat";
 
 "lng_media_type_photos" = "Photos";
 "lng_media_type_gifs" = "GIFs";
@@ -1997,7 +2004,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_manage_peer_reactions_max_about" = "Limit the number of different reactions that can be added to a post, including already published ones.";
 
 "lng_manage_peer_reactions_paid" = "Enable Paid Reactions";
-"lng_manage_peer_reactions_paid_about" = "Switch this on to let your subscribers react to posts with Telegram Stars, which you will be able to withdraw as TON. {link}";
+"lng_manage_peer_reactions_paid_about" = "Switch this on to let your subscribers react to posts with Telegram Stars, which you will be able to withdraw as Grams. {link}";
 "lng_manage_peer_reactions_paid_link" = "Learn more >";
 
 "lng_manage_peer_antispam" = "Aggressive Anti-Spam";
@@ -2546,8 +2553,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_action_gift_channel_about_unique" = "You can display this gift in channel's Gifts or turn it into unique collectible.";
 "lng_action_gift_for_stars#one" = "{count} Star";
 "lng_action_gift_for_stars#other" = "{count} Stars";
-"lng_action_gift_for_ton#one" = "{count} TON";
-"lng_action_gift_for_ton#other" = "{count} TON";
+"lng_action_gift_for_ton#one" = "{count} Gram";
+"lng_action_gift_for_ton#other" = "{count} Grams";
 "lng_action_gift_got_subtitle" = "Gift from {user}";
 "lng_action_gift_got_stars_text#one" = "Display this gift on your page or convert it to **{count}** Star.";
 "lng_action_gift_got_stars_text#other" = "Display this gift on your page or convert it to **{count}** Stars.";
@@ -2564,7 +2571,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_action_gift_premium_months#other" = "{count} Months Premium";
 "lng_action_gift_premium_about" = "Subscription for exclusive Telegram features.";
 "lng_action_gift_refunded" = "This gift was downgraded because a request to refund the payment related to this gift was made, and the money was returned.";
-"lng_action_gift_got_ton" = "Use TON to suggest posts to channels.";
+"lng_action_gift_got_ton" = "Use Grams to suggest posts to channels.";
 "lng_action_gift_offer_incoming" = "An offer to buy this gift for {amount}.";
 "lng_action_gift_offer_you" = "You offered {cost} for {name}.";
 "lng_action_gift_offer_state_expires" = "This offer expires in {time}.";
@@ -2677,8 +2684,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_action_todo_tasks_and_last" = "{tasks} and {task}";
 "lng_action_suggest_success_stars#one" = "{from} has received {count} Star for publishing post.";
 "lng_action_suggest_success_stars#other" = "{from} has received {count} Stars for publishing post.";
-"lng_action_suggest_success_ton#one" = "{from} has received {count} TON for publishing post.";
-"lng_action_suggest_success_ton#other" = "{from} has received {count} TON for publishing post.";
+"lng_action_suggest_success_ton#one" = "{from} has received {count} Gram for publishing post.";
+"lng_action_suggest_success_ton#other" = "{from} has received {count} Grams for publishing post.";
 "lng_action_suggest_refund_user" = "User refunded the Stars so that post was deleted.";
 "lng_action_suggest_refund_admin" = "Admin deleted the post early so that the price was refunded to the user.";
 "lng_action_post_rejected" = "The post was rejected.";
@@ -2957,6 +2964,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_repeated_yearly" = "yearly";
 "lng_edited_date" = "Edited: {date}";
 "lng_sent_date" = "Sent: {date}";
+"lng_edited_at" = "edited at {time}";
+"lng_edited_on" = "edited on {date} at {time}";
+"lng_sent_on" = "sent on {date} at {time}";
 "lng_approximate_about" = "Estimated date of video publishing.";
 "lng_views_tooltip#one" = "Views: {count}";
 "lng_views_tooltip#other" = "Views: {count}";
@@ -3277,11 +3287,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 "lng_credits_summary_title" = "Telegram Stars";
 "lng_credits_summary_about" = "Buy Stars to unlock content and services in miniapps on Telegram.";
-"lng_credits_currency_summary_title" = "TON Balance";
-"lng_credits_currency_summary_about" = "Offer TON to submit post suggestions to channels on Telegram.";
-"lng_credits_currency_summary_subtitle" = "You can withdraw your TON using Fragment.";
+"lng_credits_currency_summary_title" = "Gram Balance";
+"lng_credits_currency_summary_about" = "Offer Grams to submit post suggestions to channels on Telegram.";
+"lng_credits_currency_summary_subtitle" = "You can withdraw your Grams using Fragment.";
 "lng_credits_currency_summary_in_button" = "Top-up via Fragment";
-"lng_credits_currency_summary_in_subtitle" = "You can top-up your TON balance via Fragment.";
+"lng_credits_currency_summary_in_subtitle" = "You can top-up your Grams balance via Fragment.";
 "lng_credits_summary_options_subtitle" = "Choose package";
 "lng_credits_summary_options_credits#one" = "{count} Star";
 "lng_credits_summary_options_credits#other" = "{count} Stars";
@@ -3368,7 +3378,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_credits_box_history_entry_gift_examples" = "Examples";
 "lng_credits_box_history_entry_ads" = "Ads Platform";
 "lng_credits_box_history_entry_premium_bot" = "Stars Top-Up";
-"lng_credits_box_history_entry_currency_in" = "TON Top-Up";
+"lng_credits_box_history_entry_currency_in" = "Gram Top-Up";
 "lng_credits_box_history_entry_posts_search" = "Posts Search";
 "lng_credits_box_history_entry_api" = "Paid Broadcast";
 "lng_credits_box_history_entry_floodskip_about#one" = "{count} Message";
@@ -4014,8 +4024,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_gift_stars_incoming" = "Use Stars to unlock content and services on Telegram.";
 "lng_gift_until" = "Until";
 
-"lng_gift_ton_amount#one" = "{count} TON";
-"lng_gift_ton_amount#other" = "{count} TON";
+"lng_gift_ton_amount#one" = "{count} Gram";
+"lng_gift_ton_amount#other" = "{count} Grams";
 
 "lng_gift_premium_title" = "Premium Gift";
 "lng_gift_premium_text#one" = "Subscribe to **Telegram Premium** to send up to **{count}** of these gifts and unlock access to multiple additional features.";
@@ -4073,9 +4083,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_gift_buy_resale_title" = "Buy {name}";
 "lng_gift_buy_resale_button" = "Buy for {cost}";
 "lng_gift_buy_resale_equals" = "Equals to {cost}";
-"lng_gift_buy_resale_only_ton" = "The seller only accepts TON as payment.";
+"lng_gift_buy_resale_only_ton" = "The seller only accepts Grams as payment.";
 "lng_gift_buy_resale_pay_stars" = "Pay in Stars";
-"lng_gift_buy_resale_pay_ton" = "Pay in TON";
+"lng_gift_buy_resale_pay_ton" = "Pay in Grams";
 "lng_gift_buy_resale_confirm" = "Do you want to buy {name} for {price} and gift it to {user}?";
 "lng_gift_buy_resale_confirm_self" = "Do you want to buy {name} for {price}?";
 "lng_gift_buy_price_change_title" = "Price change!";
@@ -4278,7 +4288,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_gift_offer_button" = "Offer to Buy";
 "lng_gift_offer_title" = "Offer to Buy";
 "lng_gift_offer_stars_about" = "Choose how many Stars you'd like to offer for {name}.";
-"lng_gift_offer_ton_about" = "Choose how many TON you'd like to offer for {name}.";
+"lng_gift_offer_ton_about" = "Choose how many Grams you'd like to offer for {name}.";
 "lng_gift_offer_duration" = "Offer Duration";
 "lng_gift_offer_duration_about" = "Choose how long {user} can accept your offer. When the time expires, the amount will be refunded.";
 "lng_gift_offer_cost_button" = "Offer {cost}";
@@ -4302,13 +4312,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_gift_sell_amount#other" = "You will receive **{count}** Stars.";
 "lng_gift_sell_min_price#one" = "Minimum price is {count} Star.";
 "lng_gift_sell_min_price#other" = "Minimum price is {count} Stars.";
-"lng_gift_sell_only_ton" = "Only Accept TON";
-"lng_gift_sell_only_ton_about" = "If the buyer pays you in TON, there's no risk of refunds, unlike Stars payments.";
-"lng_gift_sell_amount_ton#one" = "You will receive **{count}** TON.";
-"lng_gift_sell_amount_ton#other" = "You will receive **{count}** TON.";
-"lng_gift_sell_min_price_ton#one" = "Minimum price is {count} TON.";
-"lng_gift_sell_min_price_ton#other" = "Minimum price is {count} TON.";
-"lng_gift_sell_title_ton" = "Price in TON";
+"lng_gift_sell_only_ton" = "Only Accept Grams";
+"lng_gift_sell_only_ton_about" = "If the buyer pays you in Grams, there's no risk of refunds, unlike Stars payments.";
+"lng_gift_sell_amount_ton#one" = "You will receive **{count}** Gram.";
+"lng_gift_sell_amount_ton#other" = "You will receive **{count}** Grams.";
+"lng_gift_sell_min_price_ton#one" = "Minimum price is {count} Gram.";
+"lng_gift_sell_min_price_ton#other" = "Minimum price is {count} Grams.";
+"lng_gift_sell_title_ton" = "Price in Grams";
 "lng_gift_sell_put" = "Put for Sale";
 "lng_gift_sell_update" = "Update the Price";
 "lng_gift_sell_toast" = "{name} is now for sale!";
@@ -5228,6 +5238,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_context_upload_edit_caption" = "Edit Caption";
 "lng_context_copy_selected" = "Copy Selected Text";
 "lng_context_copy_selected_items" = "Copy Selected as Text";
+"lng_context_copy_in_reply_to" = "in reply to {name}";
 "lng_context_forward_selected" = "Forward Selected";
 "lng_context_send_now_selected" = "Send selected now";
 "lng_context_reschedule_selected" = "Reschedule Selected";
@@ -5470,10 +5481,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_suggest_options_stars_request" = "Request Stars";
 "lng_suggest_options_stars_price" = "Enter Price in Stars";
 "lng_suggest_options_stars_price_about" = "Choose how many Stars to pay to publish this message.";
-"lng_suggest_options_ton_offer" = "Offer TON";
-"lng_suggest_options_ton_request" = "Request TON";
-"lng_suggest_options_ton_price" = "Enter Price in TON";
-"lng_suggest_options_ton_price_about" = "Choose how many TON to pay to publish this message.";
+"lng_suggest_options_ton_offer" = "Offer Grams";
+"lng_suggest_options_ton_request" = "Request Grams";
+"lng_suggest_options_ton_price" = "Enter Price in Grams";
+"lng_suggest_options_ton_price_about" = "Choose how many Grams to pay to publish this message.";
 "lng_suggest_options_date" = "Time";
 "lng_suggest_options_date_any" = "Anytime";
 "lng_suggest_options_date_publish" = "Publish";
@@ -5481,8 +5492,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_suggest_options_date_about" = "Select the date and time you want the message to be published. The post will remain available for at least 24 hours from this date.";
 "lng_suggest_options_you_get_stars#one" = "You will receive {count} Star ({percent}) for publishing this post.";
 "lng_suggest_options_you_get_stars#other" = "You will receive {count} Stars ({percent}) for publishing this post.";
-"lng_suggest_options_you_get_ton#one" = "You will receive {count} TON ({percent}) for publishing this post.";
-"lng_suggest_options_you_get_ton#other" = "You will receive {count} TON ({percent}) for publishing this post.";
+"lng_suggest_options_you_get_ton#one" = "You will receive {count} Gram ({percent}) for publishing this post.";
+"lng_suggest_options_you_get_ton#other" = "You will receive {count} Grams ({percent}) for publishing this post.";
 "lng_suggest_options_stars_warning" = "Transactions in **Stars** may be reversed by the payment provider within **21** days. Only accept Stars from people you trust.";
 "lng_suggest_options_offer" = "Offer {amount}";
 "lng_suggest_options_offer_free" = "Offer for Free";
@@ -5502,20 +5513,20 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_suggest_action_agree_date" = "The post will be automatically published on {channel} {date}.";
 "lng_suggest_action_your_charged_stars#one" = "You have been charged **{count} Star**.";
 "lng_suggest_action_your_charged_stars#other" = "You have been charged **{count} Stars**.";
-"lng_suggest_action_your_charged_ton#one" = "You have been charged **{count} TON**.";
-"lng_suggest_action_your_charged_ton#other" = "You have been charged **{count} TON**.";
+"lng_suggest_action_your_charged_ton#one" = "You have been charged **{count} Gram**.";
+"lng_suggest_action_your_charged_ton#other" = "You have been charged **{count} Grams**.";
 "lng_suggest_action_his_charged_stars#one" = "{from} has been charged **{count} Star**.";
 "lng_suggest_action_his_charged_stars#other" = "{from} has been charged **{count} Stars**.";
-"lng_suggest_action_his_charged_ton#one" = "{from} has been charged **{count} TON**.";
-"lng_suggest_action_his_charged_ton#other" = "{from} has been charged **{count} TON**.";
+"lng_suggest_action_his_charged_ton#one" = "{from} has been charged **{count} Gram**.";
+"lng_suggest_action_his_charged_ton#other" = "{from} has been charged **{count} Grams**.";
 "lng_suggest_action_agree_receive_stars" = "{channel} will receive the Stars once the post has been live for 24 hours.";
-"lng_suggest_action_agree_receive_ton" = "{channel} will receive TON once the post has been live for 24 hours.";
+"lng_suggest_action_agree_receive_ton" = "{channel} will receive Grams once the post has been live for 24 hours.";
 "lng_suggest_action_agree_removed_stars" = "If {channel} removes the post before it has been live for 24 hours, the Stars will be refunded.";
-"lng_suggest_action_agree_removed_ton" = "If {channel} removes the post before it has been live for 24 hours, TON will be refunded.";
+"lng_suggest_action_agree_removed_ton" = "If {channel} removes the post before it has been live for 24 hours, Grams will be refunded.";
 "lng_suggest_action_your_not_enough_stars" = "**Transaction failed** because you didn't have enough Stars.";
-"lng_suggest_action_your_not_enough_ton" = "**Transaction failed** because you didn't have enough TON.";
+"lng_suggest_action_your_not_enough_ton" = "**Transaction failed** because you didn't have enough Grams.";
 "lng_suggest_action_his_not_enough_stars" = "**Transaction failed** because the user didn't have enough Stars.";
-"lng_suggest_action_his_not_enough_ton" = "**Transaction failed** because the user didn't have enough TON.";
+"lng_suggest_action_his_not_enough_ton" = "**Transaction failed** because the user didn't have enough Grams.";
 "lng_suggest_action_declined" = "{from} rejected the message.";
 "lng_suggest_action_declined_reason" = "{from} rejected the message with the comment.";
 "lng_suggest_change_price" = "{from} suggests a new price for the message.";
@@ -5537,32 +5548,32 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_suggest_accept_text_to" = "Do you want to publish this post to {channel}?";
 "lng_suggest_accept_receive_stars#one" = "{channel} will receive **{count} Star** ({percent}) for publishing {date}.";
 "lng_suggest_accept_receive_stars#other" = "{channel} will receive **{count} Stars** ({percent}) for publishing {date}.";
-"lng_suggest_accept_receive_ton#one" = "{channel} will receive **{count} TON** ({percent}) for publishing {date}.";
-"lng_suggest_accept_receive_ton#other" = "{channel} will receive **{count} TON** ({percent}) for publishing {date}.";
+"lng_suggest_accept_receive_ton#one" = "{channel} will receive **{count} Gram** ({percent}) for publishing {date}.";
+"lng_suggest_accept_receive_ton#other" = "{channel} will receive **{count} Grams** ({percent}) for publishing {date}.";
 "lng_suggest_accept_receive_now_stars#one" = "{channel} will receive **{count} Star** ({percent}) for publishing right now.";
 "lng_suggest_accept_receive_now_stars#other" = "{channel} will receive **{count} Stars** ({percent}) for publishing right now.";
-"lng_suggest_accept_receive_now_ton#one" = "{channel} will receive **{count} TON** ({percent}) for publishing right now.";
-"lng_suggest_accept_receive_now_ton#other" = "{channel} will receive **{count} TON** ({percent}) for publishing right now.";
+"lng_suggest_accept_receive_now_ton#one" = "{channel} will receive **{count} Gram** ({percent}) for publishing right now.";
+"lng_suggest_accept_receive_now_ton#other" = "{channel} will receive **{count} Grams** ({percent}) for publishing right now.";
 "lng_suggest_accept_receive_if" = "It must remain visible for at least **24** hours after publication.";
 "lng_suggest_accept_pay_stars#one" = "You will pay **{count} Star** for publishing {date}.";
 "lng_suggest_accept_pay_stars#other" = "You will pay **{count} Stars** for publishing {date}.";
-"lng_suggest_accept_pay_ton#one" = "You will pay **{count} TON** for publishing {date}.";
-"lng_suggest_accept_pay_ton#other" = "You will pay **{count} TON** for publishing {date}.";
+"lng_suggest_accept_pay_ton#one" = "You will pay **{count} Gram** for publishing {date}.";
+"lng_suggest_accept_pay_ton#other" = "You will pay **{count} Grams** for publishing {date}.";
 "lng_suggest_accept_pay_now_stars#one" = "You will pay **{count} Star** for publishing right now.";
 "lng_suggest_accept_pay_now_stars#other" = "You will pay **{count} Stars** for publishing right now.";
-"lng_suggest_accept_pay_now_ton#one" = "You will pay **{count} TON** for publishing right now.";
-"lng_suggest_accept_pay_now_ton#other" = "You will pay **{count} TON** for publishing right now.";
+"lng_suggest_accept_pay_now_ton#one" = "You will pay **{count} Gram** for publishing right now.";
+"lng_suggest_accept_pay_now_ton#other" = "You will pay **{count} Grams** for publishing right now.";
 "lng_suggest_accept_send" = "Publish";
 "lng_suggest_stars_amount#one" = "{count} Star";
 "lng_suggest_stars_amount#other" = "{count} Stars";
-"lng_suggest_ton_amount#one" = "{count} TON";
-"lng_suggest_ton_amount#other" = "{count} TON";
+"lng_suggest_ton_amount#one" = "{count} Gram";
+"lng_suggest_ton_amount#other" = "{count} Grams";
 "lng_suggest_warn_title_stars" = "Stars will be lost";
-"lng_suggest_warn_title_ton" = "TON will be lost";
+"lng_suggest_warn_title_ton" = "Grams will be lost";
 "lng_suggest_warn_text_stars" = "You won't receive **Stars** for the post if you delete it now. The post must remain visible for at least **24 hours** after it was published.";
-"lng_suggest_warn_text_ton" = "You won't receive **TON** for the post if you delete it now. The post must remain visible for at least **24 hours** after it was published.";
+"lng_suggest_warn_text_ton" = "You won't receive **Grams** for the post if you delete it now. The post must remain visible for at least **24 hours** after it was published.";
 "lng_suggest_warn_delete_anyway" = "Delete Anyway";
-"lng_suggest_low_ton_title" = "{amount} TON Needed";
+"lng_suggest_low_ton_title" = "{amount} Grams Needed";
 "lng_suggest_low_ton_text" = "You can add funds to your balance via the third-party platform Fragment.";
 "lng_suggest_low_ton_fragment" = "Add Funds via Fragment";
 "lng_suggest_low_ton_fragment_url" = "https://fragment.com/ads/topup";

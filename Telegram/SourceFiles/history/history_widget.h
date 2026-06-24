@@ -118,6 +118,7 @@ class PinnedTracker;
 class TranslateBar;
 class ComposeSearch;
 class SubsectionTabs;
+class PullToNextChannel;
 struct SelectedQuote;
 class SuggestOptionsBar;
 enum class SuggestMode;
@@ -313,6 +314,9 @@ public:
 	void showInfoTooltip(
 		const TextWithEntities &text,
 		Fn<void()> hiddenCallback);
+	void showHiddenSenderTooltip(
+		QRect globalArea,
+		const TextWithEntities &text);
 	void showPremiumStickerTooltip(
 		not_null<const HistoryView::Element*> view);
 	void showPremiumToast(not_null<DocumentData*> document);
@@ -771,6 +775,7 @@ private:
 	int _pinnedBarHeight = 0;
 	FullMsgId _pinnedClickedId;
 	std::optional<FullMsgId> _minPinnedId;
+	bool _pinnedBarHasCustomButton = false;
 
 	std::unique_ptr<Ui::GroupCallBar> _groupCallBar;
 	int _groupCallBarHeight = 0;
@@ -833,6 +838,7 @@ private:
 	Ui::Animations::Simple _scrollToAnimation;
 
 	HistoryView::CornerButtons _cornerButtons;
+	std::unique_ptr<HistoryView::PullToNextChannel> _pullToNext;
 
 	std::unique_ptr<ChatHelpers::FieldAutocomplete> _autocomplete;
 	std::unique_ptr<Ui::Emoji::SuggestionsController> _emojiSuggestions;
@@ -935,6 +941,7 @@ private:
 	base::Timer _saveCloudDraftTimer;
 
 	HistoryView::InfoTooltip _topToast;
+	HistoryView::AnchoredTooltip _hiddenSenderTooltip;
 	std::unique_ptr<HistoryView::StickerToast> _stickerToast;
 	std::unique_ptr<HistoryView::SelfForwardsTagger> _selfForwardsTagger;
 	std::unique_ptr<ChooseMessagesForReport> _chooseForReport;

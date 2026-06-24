@@ -1516,6 +1516,7 @@ void Viewport::RendererRhi::paintUsingRaster(
 	raster.fill(Qt::transparent);
 	{
 		auto painter = Painter(&raster);
+		painter.translate(-rect.topLeft());
 		method(painter);
 	}
 

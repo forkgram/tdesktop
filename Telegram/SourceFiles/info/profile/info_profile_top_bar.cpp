@@ -922,9 +922,10 @@ void TopBar::setupActions(not_null<Window::SessionController*> controller) {
 					tr::lng_channel_invite_private(tr::now));
 				return;
 			}
-			controller->showPeerHistory(
-				chat,
+			auto params = Window::SectionShow(
 				Window::SectionShow::Way::Forward);
+			params.preferCurrentWindow = true;
+			controller->showPeerHistory(chat, params);
 		});
 		discuss->setAccessibleName(tr::lng_profile_action_short_discuss(tr::now));
 		_actions->add(discuss);
@@ -956,6 +957,25 @@ void TopBar::setupActions(not_null<Window::SessionController*> controller) {
 	if (chechMax()) {
 		return;
 	}
+	if (peer->groupCall() || peer->canManageGroupCall()) {
+		const auto broadcast = peer->isBroadcast();
+		const auto text = broadcast
+			? tr::lng_profile_action_short_live_stream(tr::now)
+			: tr::lng_profile_action_short_video_chat(tr::now);
+		const auto liveStream = Ui::CreateChild<TopBarActionButton>(
+			this,
+			text,
+			st::infoProfileTopBarActionLiveStream);
+		liveStream->setClickedCallback([=] {
+			controller->startOrJoinGroupCall(peer);
+		});
+		liveStream->setAccessibleName(text);
+		buttons.push_back(liveStream);
+		_actions->add(liveStream);
+	}
+	if (chechMax()) {
+		return;
+	}
 	{
 		const auto channel = peer->asBroadcast();
 		if (!user && !channel) {
@@ -969,7 +989,9 @@ void TopBar::setupActions(not_null<Window::SessionController*> controller) {
 				|| user->isVerifyCodes()
 				|| !user->session().premiumCanBuy())) {
 		} else if (channel
-			&& (channel->isForbidden() || !channel->stargiftsAvailable())) {
+			&& (channel->isForbidden()
+				|| !channel->stargiftsAvailable()
+				|| channel->amCreator())) {
 		} else {
 			const auto giftButton = Ui::CreateChild<TopBarActionButton>(
 				this,

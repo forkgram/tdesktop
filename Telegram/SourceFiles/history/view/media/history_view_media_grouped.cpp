@@ -519,7 +519,7 @@ TextState GroupedMedia::getPartState(
 				part.sides,
 				point,
 				request);
-			result.symbol += shift;
+			AddTextStateOffset(&result, uint16(shift));
 			result.itemId = part.item->fullId();
 			return result;
 		}

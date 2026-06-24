@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/platform/base_platform_system_media_controls.h"
 #include "core/application.h"
 #include "core/core_settings.h"
+#include "core/version.h"
 #include "data/data_document_media.h"
 #include "data/data_document.h"
 #include "data/data_file_origin.h"
@@ -29,6 +30,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Media {
 namespace {
+
+constexpr auto kSkipMs = crl::time(15 * 1000);
 
 [[nodiscard]] auto RepeatModeToLoopStatus(Media::RepeatMode mode) {
 	using Mode = Media::RepeatMode;
@@ -63,6 +66,20 @@ SystemMediaControlsManager::SystemMediaControlsManager()
 	using TrackState = Media::Player::TrackState;
 	const auto mediaPlayer = Media::Player::instance();
 
+	const auto lookupPlaybackRate = [=] {
+		const auto type = mediaPlayer->getActiveType();
+		const auto current = mediaPlayer->current(type);
+		if (!current || !current.changeablePlaybackSpeed()) {
+			return 1.;
+		}
+		const auto document = current.audio();
+		return (document
+			&& !document->isVoiceMessage()
+			&& !document->isVideoMessage())
+			? Core::App().settings().audioPlaybackSpeed()
+			: Core::App().settings().voicePlaybackSpeed();
+	};
+
 	auto trackFilter = rpl::filter([=](const TrackState &state) {
 		const auto type = state.id.type();
 		return (type == AudioMsgId::Type::Song)
@@ -86,6 +103,10 @@ SystemMediaControlsManager::SystemMediaControlsManager()
 		return PlaybackStatus::Playing;
 	}) | rpl::distinct_until_changed(
 	) | rpl::on_next([=](PlaybackStatus status) {
+		if (_controls->seekingSupported()) {
+			const auto type = mediaPlayer->getActiveType();
+			_controls->setPosition(mediaPlayer->getState(type).position);
+		}
 		_controls->setPlaybackStatus(status);
 	}, _lifetime);
 
@@ -170,6 +191,7 @@ SystemMediaControlsManager::SystemMediaControlsManager()
 			// the track is changed
 			// or when the position is changed by the user.
 			_controls->setPosition(state.position);
+			_controls->setPlaybackRate(lookupPlaybackRate());
 
 			_streamed = std::make_unique<Media::Streaming::Instance>(
 				document,
@@ -265,6 +287,13 @@ SystemMediaControlsManager::SystemMediaControlsManager()
 		_controls->setShuffle(mode == OrderMode::Shuffle);
 	}, _lifetime);
 
+	rpl::merge(
+		Core::App().settings().voicePlaybackSpeedChanges() | rpl::to_empty,
+		Core::App().settings().audioPlaybackSpeedChanges() | rpl::to_empty
+	) | rpl::on_next([=] {
+		_controls->setPlaybackRate(lookupPlaybackRate());
+	}, _lifetime);
+
 	_controls->commandRequests(
 	) | rpl::on_next([=](Command command) {
 		const auto type = mediaPlayer->getActiveType();
@@ -301,6 +330,23 @@ SystemMediaControlsManager::SystemMediaControlsManager()
 		}
 		case Command::Quit: {
 			Media::Player::instance()->stopAndClose();
+			break;
+		}
+		case Command::SkipForward:
+		case Command::SkipBackward: {
+			const auto state = mediaPlayer->getState(type);
+			if (state.length > 0) {
+				const auto delta = (command == Command::SkipForward)
+					? kSkipMs
+					: -kSkipMs;
+				const auto position = std::clamp(
+					crl::time(state.position + delta),
+					crl::time(0),
+					crl::time(state.length));
+				mediaPlayer->finishSeeking(
+					type,
+					position / float64(state.length));
+			}
 			break;
 		}
 		}

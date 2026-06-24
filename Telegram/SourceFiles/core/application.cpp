@@ -29,6 +29,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/launcher.h"
 #include "core/proxy_rotation_manager.h"
 #include "core/ui_integration.h"
+#include "core/version.h"
 #include "chat_helpers/emoji_keywords.h"
 #include "chat_helpers/stickers_emoji_image_loader.h"
 #include "base/platform/base_platform_global_shortcuts.h"
@@ -1390,6 +1391,13 @@ bool Application::hasActiveWindow(not_null<Main::Session*> session) const {
 
 Window::Controller *Application::activePrimaryWindow() const {
 	return _lastActivePrimaryWindow;
+}
+
+void Application::setActivePrimaryWindow(
+		not_null<Window::Controller*> window) {
+	if (window->isPrimary()) {
+		_lastActivePrimaryWindow = window;
+	}
 }
 
 Window::Controller *Application::separateWindowFor(

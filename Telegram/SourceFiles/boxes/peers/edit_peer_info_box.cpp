@@ -874,7 +874,7 @@ void Controller::refreshHistoryVisibility() {
 		(!withUsername
 			&& !_channelHasLocationOriginalValue
 			&& (!_discussionLinkSavedValue || !*_discussionLinkSavedValue)
-			&& (!_forumSavedValue || !*_forumSavedValue)),
+			&& !_forumSavedValue.value_or(_peer->isForum())),
 		anim::type::instant);
 }
 

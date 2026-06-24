@@ -33,6 +33,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/window_controller.h"
 #include "window/window_session_controller.h"
 #include "core/application.h"
+#include "core/version.h"
 #include "mainwindow.h"
 #include "api/api_reactions_notify_settings.h"
 #include "api/api_updates.h"
@@ -148,7 +149,6 @@ base::options::toggle OptionCustomNotification({
 	.scope = [] {
 		return Platform::Notifications::Enforced();
 	},
-	.restartRequired = true,
 });
 
 const char kOptionGNotification[] = "gnotification";
@@ -167,7 +167,6 @@ base::options::toggle OptionGNotification({
 		return false;
 #endif // __has_include(<gio/gio.hpp>)
 	},
-	.restartRequired = true,
 });
 
 base::options::toggle HideReplyButtonOption({
@@ -209,6 +208,13 @@ System::System()
 			|| type == ChangeType::CountMessages) {
 			Core::App().domain().notifyUnreadBadgeChanged();
 		}
+	}, lifetime());
+
+	rpl::merge(
+		OptionCustomNotification.changes(),
+		OptionGNotification.changes()
+	 ) | rpl::on_next([=] {
+		createManager();
 	}, lifetime());
 }
 

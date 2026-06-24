@@ -32,6 +32,10 @@ struct PeerUserpicView;
 struct VoiceOnceParticles;
 } // namespace Ui
 
+namespace Ui::Paint {
+class Blobs;
+} // namespace Ui::Paint
+
 namespace Ui::Text {
 struct GeometryDescriptor;
 } // namespace Ui::Text
@@ -926,10 +930,14 @@ struct HistoryDocumentNamed
 
 struct HistoryDocumentVoicePlayback {
 	HistoryDocumentVoicePlayback(const HistoryView::Document *that);
+	~HistoryDocumentVoicePlayback();
 
 	int32 position = 0;
 	anim::value progress;
 	Ui::Animations::Basic progressAnimation;
+
+	std::unique_ptr<Ui::Paint::Blobs> blobs;
+	crl::time blobsLastUpdate = 0;
 };
 
 class HistoryDocumentVoice

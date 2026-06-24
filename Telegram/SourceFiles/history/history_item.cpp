@@ -2491,12 +2491,7 @@ void HistoryItem::applySentMessage(const MTPDmessage &data) {
 		_flags &= ~MessageFlag::InvertMedia;
 	}
 
-	updateSentContent({
-		qs(data.vmessage()),
-		Api::EntitiesFromMTP(
-			&_history->session(),
-			data.ventities().value_or_empty())
-	}, data.vmedia(), data.vrich_message());
+	updateSentContent(data);
 	updateReplyMarkup(HistoryMessageMarkupData(data.vreply_markup()));
 	updateForwardedInfo(data.vfwd_from());
 	changeViewsCount(data.vviews().value_or(-1));
@@ -2539,6 +2534,15 @@ void HistoryItem::applySentMessage(const MTPDmessage &data) {
 	_history->owner().notifyItemDataChange(this);
 	_history->owner().requestItemTextRefresh(this);
 	_history->owner().updateDependentMessages(this);
+}
+
+void HistoryItem::updateSentContent(const MTPDmessage &data) {
+	updateSentContent({
+		qs(data.vmessage()),
+		Api::EntitiesFromMTP(
+			&_history->session(),
+			data.ventities().value_or_empty())
+	}, data.vmedia(), data.vrich_message());
 }
 
 void HistoryItem::applySentMessage(

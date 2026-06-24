@@ -24,6 +24,7 @@ struct Markdown;
 
 namespace Iv {
 struct RichPage;
+struct RichMessageLimits;
 } // namespace Iv
 
 namespace Iv::Markdown {
@@ -673,6 +674,7 @@ struct MarkdownPrepareTableRenderLimits {
 
 struct MarkdownPrepareLimits {
 	MarkdownPrepareTableRenderLimits tableRender;
+	MarkdownPrepareTableRenderLimits markdownTableRender;
 	int visualListDepth = 0;
 	int visualQuoteDepth = 0;
 	int maxPreparedBlocks = 0;
@@ -726,6 +728,7 @@ struct NativeInstantViewPrepareRequest {
 	std::shared_ptr<const Iv::RichPage> richPage;
 	std::shared_ptr<MediaRuntime> mediaRuntime;
 	std::optional<MarkdownPrepareDimensions> dimensionsOverride;
+	std::optional<MarkdownPrepareTableRenderLimits> tableRenderLimits;
 	bool editMode = false;
 };
 
@@ -771,6 +774,10 @@ struct NativeInstantViewPrepareResult {
 };
 
 [[nodiscard]] const MarkdownPrepareTableRenderLimits &PrepareTableRenderLimitsForIv();
+[[nodiscard]] MarkdownPrepareTableRenderLimits PrepareTableRenderLimitsForRichMessage(
+	const RichMessageLimits &limits);
+[[nodiscard]] auto PrepareMarkdownTableRenderLimitsForIv()
+-> const MarkdownPrepareTableRenderLimits &;
 [[nodiscard]] const MarkdownPrepareLimits &PrepareLimitsForIv();
 [[nodiscard]] MarkdownPrepareDimensions CaptureMarkdownPrepareDimensions();
 [[nodiscard]] MarkdownPrepareDimensions CaptureMarkdownPrepareDimensions(
@@ -784,6 +791,8 @@ struct NativeInstantViewPrepareResult {
 [[nodiscard]] NativeInstantViewLeafUpdateResult UpdatePreparedNativeInstantViewLeaf(
 	MarkdownArticleContent *content,
 	const RichPage &page,
-	const PreparedEditLeafSource &source);
+	const PreparedEditLeafSource &source,
+	std::optional<MarkdownPrepareTableRenderLimits> tableRenderLimits
+		= std::nullopt);
 
 } // namespace Iv::Markdown
