@@ -428,6 +428,9 @@ void PeerData::setUserpicPhoto(const MTPPhoto &data) {
 }
 
 QImage *PeerData::userpicCloudImage(Ui::PeerUserpicView &view) const {
+	if (isBlocked()) {
+		return nullptr;
+	}
 	if (!_userpic.isCurrentView(view.cloud)) {
 		if (!_userpic.empty()) {
 			view.cloud = _userpic.createView();
@@ -571,9 +574,6 @@ bool PeerData::userpicPhotoUnknown() const {
 }
 
 PhotoId PeerData::userpicPhotoId() const {
-	if (isBlocked()) {
-		return 0;
-	}
 	return userpicPhotoUnknown() ? 0 : _userpicPhotoId;
 }
 
