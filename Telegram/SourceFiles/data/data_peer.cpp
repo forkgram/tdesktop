@@ -574,6 +574,9 @@ bool PeerData::userpicPhotoUnknown() const {
 }
 
 PhotoId PeerData::userpicPhotoId() const {
+	if (isBlocked()) {
+		return 0;
+	}
 	return userpicPhotoUnknown() ? 0 : _userpicPhotoId;
 }
 
