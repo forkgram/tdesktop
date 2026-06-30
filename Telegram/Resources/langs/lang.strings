@@ -567,6 +567,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_settings_hide_archived_stories" = "Hide archived stories";
 "lng_settings_skip_share_from_bot" = "Skip share box from app bots";
 "lng_settings_additional_buttons_web_bot" = "Display additional buttons for app bots";
+"lng_settings_hide_from_blocked_users" = "Hide messages from blocked users";
 
 "lng_fork_extract_media_from_preview" = "Send media from link preview as attachment";
 

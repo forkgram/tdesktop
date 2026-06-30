@@ -61,6 +61,7 @@ QByteArray ForkSettings::serialize() const {
 			<< qint32(_additionalButtonsWebBot ? 1 : 0)
 			<< _botsPlatforms
 			<< qint32(_archivedStoriesAreHidden ? 1 : 0)
+			<< qint32(_hideFromBlockedUsers ? 1 : 0)
 			;
 	}
 	return result;
@@ -97,6 +98,7 @@ void ForkSettings::addFromSerialized(const QByteArray &serialized) {
 	qint32 copyLoginCode = _copyLoginCode;
 	qint32 additionalButtonsWebBot = _additionalButtonsWebBot;
 	qint32 archivedStoriesAreHidden = _archivedStoriesAreHidden;
+	qint32 hideFromBlockedUsers = _hideFromBlockedUsers;
 	QString botsPlatforms = _botsPlatforms;
 
 	if (!stream.atEnd()) {
@@ -145,6 +147,9 @@ void ForkSettings::addFromSerialized(const QByteArray &serialized) {
 	if (!stream.atEnd()) {
 		stream >> archivedStoriesAreHidden;
 	}
+	if (!stream.atEnd()) {
+		stream >> hideFromBlockedUsers;
+	}
 	if (stream.status() != QDataStream::Ok) {
 		LOG(("App Error: "
 			"Bad data for Core::ForkSettings::constructFromSerialized()"));
@@ -175,6 +180,7 @@ void ForkSettings::addFromSerialized(const QByteArray &serialized) {
 	_copyLoginCode = (copyLoginCode == 1);
 	_additionalButtonsWebBot = (additionalButtonsWebBot == 1);
 	_archivedStoriesAreHidden = (archivedStoriesAreHidden == 1);
+	_hideFromBlockedUsers = (hideFromBlockedUsers == 1);
 	_botsPlatforms = std::move(botsPlatforms);
 }
 

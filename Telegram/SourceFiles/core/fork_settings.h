@@ -124,6 +124,13 @@ public:
 	[[nodiscard]] bool archivedStoriesAreHidden() const;
 	void setArchivedStoriesAreHidden(bool newValue);
 
+	[[nodiscard]] bool hideFromBlockedUsers() const {
+		return _hideFromBlockedUsers;
+	}
+	void setHideFromBlockedUsers(bool newValue) {
+		_hideFromBlockedUsers = newValue;
+	}
+
 private:
 	bool _squareUserpics = false;
 	bool _audioFade = true;
@@ -148,6 +155,7 @@ private:
 	bool _additionalButtonsWebBot = false;
 	QString _botsPlatforms;
 	bool _archivedStoriesAreHidden = false;
+	bool _hideFromBlockedUsers = false;
 
 };
 

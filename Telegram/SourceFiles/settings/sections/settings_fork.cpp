@@ -699,6 +699,14 @@ void BuildForkSectionContent(SectionBuilder &builder) {
 		[](bool checked) {
 			Core::App().settings().fork().setAdditionalButtonsWebBot(checked);
 		});
+	add(
+		u"fork/hide_from_blocked_users"_q,
+		{ u"hide"_q, u"blocked"_q, u"users"_q, u"messages"_q },
+		tr::lng_settings_hide_from_blocked_users(),
+		[] { return Core::App().settings().fork().hideFromBlockedUsers(); },
+		[](bool checked) {
+			Core::App().settings().fork().setHideFromBlockedUsers(checked);
+		});
 
 	builder.addSkip();
 	builder.addDivider();
