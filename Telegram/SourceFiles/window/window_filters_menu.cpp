@@ -666,6 +666,20 @@ void FiltersMenu::showMenu(QPoint position, FilterId id) {
 			std::move(filteredChats),
 			addAction);
 
+		addAction(
+			tr::lng_mute_menu_duration_forever(tr::now),
+			[=] {
+				_session->show(
+					Ui::MakeConfirmBox({
+						.text = TextWithEntities{ "Mute all chats in this folder?" },
+						.confirmed = [=](Fn<void()> &&close) {
+							close();
+						},
+					}),
+					Ui::LayerOption::CloseOther);
+			},
+			&st::menuIconMute);
+
 		addAction({
 			.text = tr::lng_filters_context_remove(tr::now),
 			.handler = crl::guard(&_outer, [=, this] {
@@ -686,6 +700,20 @@ void FiltersMenu::showMenu(QPoint position, FilterId id) {
 			[=] { return _session->session().data().chatsList(); },
 			addAction,
 			std::move(customUnreadState));
+
+		addAction(
+			tr::lng_mute_menu_duration_forever(tr::now),
+			[=] {
+				_session->show(
+					Ui::MakeConfirmBox({
+						.text = TextWithEntities{ "Mute all chats?" },
+						.confirmed = [=](Fn<void()> &&close) {
+							close();
+						},
+					}),
+					Ui::LayerOption::CloseOther);
+			},
+			&st::menuIconMute);
 
 		addAction(
 			tr::lng_filters_setup_menu(tr::now),
