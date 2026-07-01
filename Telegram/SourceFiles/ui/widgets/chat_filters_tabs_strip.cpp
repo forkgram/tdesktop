@@ -29,6 +29,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/chat_filters_tabs_slider_reorder.h"
 #include "ui/widgets/menu/menu_add_action_callback_factory.h"
 #include "ui/widgets/popup_menu.h"
+#include "ui/boxes/confirm_box.h"
 #include "ui/widgets/scroll_area.h"
 #include "ui/wrap/slide_wrap.h"
 #include "window/window_controller.h"
@@ -89,6 +90,20 @@ void ShowMenu(
 			[=] { return session->data().chatsFilters().chatsList(id); },
 			addAction);
 
+		addAction(
+			tr::lng_mute_menu_duration_forever(tr::now),
+			[=] {
+				controller->show(
+					Ui::MakeConfirmBox({
+						.text = TextWithEntities{ "Mute all chats in this folder?" },
+						.confirmed = [=](Fn<void()> &&close) {
+							close();
+						},
+					}),
+					Ui::LayerOption::CloseOther);
+			},
+			&st::menuIconMute);
+
 		auto showRemoveBox = [=] {
 			state->removeApi.request(base::make_weak(parent), controller, id);
 		};
@@ -109,6 +124,20 @@ void ShowMenu(
 			[=] { return session->data().chatsList(); },
 			addAction,
 			std::move(customUnreadState));
+
+		addAction(
+			tr::lng_mute_menu_duration_forever(tr::now),
+			[=] {
+				controller->show(
+					Ui::MakeConfirmBox({
+						.text = TextWithEntities{ "Mute all chats?" },
+						.confirmed = [=](Fn<void()> &&close) {
+							close();
+						},
+					}),
+					Ui::LayerOption::CloseOther);
+			},
+			&st::menuIconMute);
 
 		auto openFiltersSettings = [=] {
 			const auto filters = &session->data().chatsFilters();
