@@ -251,6 +251,14 @@ uint64 Entry::computeSortPosition(FilterId filterId) const {
 	const auto index = lookupPinnedIndex(filterId);
 	if (index) {
 		return PinnedDialogPos(index);
+	} else if (Core::ForkSettings::PrimaryUnmutedMessages()) {
+		if (const auto history = asHistory()) {
+			const auto muted = history->muted();
+			const auto unreadCount = history->unreadCount();
+			if (!history->isForum() && !muted && (unreadCount > 0 || history->unreadMentions().has())) {
+				return 0xFFFFFFFF000000FFULL - 30;
+			}
+		}
 	} else if (UnreadOnTopEnabled() && hasUnreadUnmutedForSort()) {
 		return UnreadOnTopDialogPos(_sortKeyByDate);
 	}
