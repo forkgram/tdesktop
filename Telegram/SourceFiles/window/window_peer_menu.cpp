@@ -236,6 +236,21 @@ void MarkAsReadChatList(not_null<Dialogs::MainList*> list) {
 	ranges::for_each(mark, MarkAsReadThread);
 }
 
+void MuteAllChatList(not_null<Dialogs::MainList*> list) {
+	auto mute = std::vector<not_null<Data::Thread*>>();
+	for (const auto &row : list->indexed()->all()) {
+		if (const auto history = row->history()) {
+			if (!history->owner().notifySettings().isMuted(history)) {
+				mute.push_back(history);
+			}
+		}
+	}
+	for (const auto &thread : mute) {
+		const auto settings = &thread->owner().notifySettings();
+		settings->update(thread, { .forever = true });
+	}
+}
+
 void PeerMenuAddMuteSubmenuAction(
 		not_null<Window::SessionController*> controller,
 		not_null<Data::Thread*> thread,
@@ -3924,6 +3939,42 @@ void MenuAddMarkAsReadChatListAction(
 		tr::lng_context_mark_read(tr::now),
 		std::move(callback),
 		&st::menuIconMarkRead);
+}
+
+void MenuAddMuteAllChatListAction(
+		not_null<Window::SessionController*> controller,
+		Fn<not_null<Dialogs::MainList*>()> &&list,
+		const PeerMenuCallback &addAction) {
+	const auto hasUnmuted = [=] {
+		for (const auto &row : list()->indexed()->all()) {
+			if (const auto history = row->history()) {
+				if (!history->owner().notifySettings().isMuted(history)) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}();
+	if (!hasUnmuted) {
+		return;
+	}
+
+	auto callback = [=] {
+		auto boxCallback = [=](Fn<void()> &&close) {
+			MuteAllChatList(list());
+			close();
+		};
+		controller->show(
+			Ui::MakeConfirmBox({
+				tr::lng_mute_all_sure(),
+				std::move(boxCallback)
+			}),
+			Ui::LayerOption::CloseOther);
+	};
+	addAction(
+		tr::lng_mute_all(tr::now),
+		std::move(callback),
+		&st::menuIconMute);
 }
 
 void ToggleHistoryArchived(

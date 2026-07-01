@@ -1681,6 +1681,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_mute_menu_sound_off" = "Disable sound";
 "lng_mute_menu_sound_select" = "Select tone";
 "lng_mute_box_title" = "Mute notifications for...";
+"lng_mute_all" = "Mute all";
+"lng_mute_all_sure" = "Are you sure you want to mute all chats in this folder?";
 
 "lng_preview_loading" = "Getting Link Info...";
 "lng_preview_cant" = "Could not generate preview for this link.";
