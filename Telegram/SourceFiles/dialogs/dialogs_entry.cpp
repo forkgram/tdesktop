@@ -26,6 +26,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/text/text_options.h"
 #include "ui/ui_utility.h"
 #include "history/history.h"
+#include "history/history_unread_things.h"
 #include "history/history_item.h"
 #include "styles/style_dialogs.h" // st::dialogsTextWidthMin
 
@@ -255,7 +256,9 @@ uint64 Entry::computeSortPosition(FilterId filterId) const {
 		if (const auto history = asHistory()) {
 			const auto muted = history->muted();
 			const auto unreadCount = history->unreadCount();
-			if (!history->isForum() && !muted && (unreadCount > 0 || history->unreadMentions().has())) {
+			const auto hasUnread = (unreadCount > 0 || history->unreadMentions().has());
+			const auto hasMention = history->unreadMentions().has();
+			if (!history->isForum() && ((!muted && hasUnread) || hasMention)) {
 				return 0xFFFFFFFF000000FFULL - 30;
 			}
 		}
