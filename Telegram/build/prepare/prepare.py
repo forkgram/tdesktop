@@ -1702,10 +1702,15 @@ win:
         -D LCMS2_INCLUDE_DIR="%LCMS2_DIR%\\include" ^
         -D LCMS2_LIBRARIES="%LCMS2_DIR%\\out\\Release\\src\\liblcms2.a"
 
-    cmake --build . --config Debug
-    cmake --install . --config Debug
-    cmake --build .
-    cmake --install .
+    if "%1"=="skip-release" (
+        cmake --build . --config Debug
+        cmake --install . --config Debug
+    ) else (
+        cmake --build . --config Debug
+        cmake --install . --config Debug
+        cmake --build .
+        cmake --install .
+    )
 """)
 
 stage('tg_owt', """
