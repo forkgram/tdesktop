@@ -1545,11 +1545,9 @@ win:
     )
     cd ..
 
-    if "%1"=="skip-release" (
-        SET CONFIGURATIONS=-debug
-    ) else (
-        SET CONFIGURATIONS=-debug-and-release
-    )
+    SET CONFIGURATIONS=-debug
+release:
+    SET CONFIGURATIONS=-debug-and-release
 win:
     """ + removeDir('"%LIBS_DIR%\\Qt-' + qt + '"') + """
     SET ANGLE_DIR=%LIBS_DIR%\\tg_angle
@@ -1702,15 +1700,10 @@ win:
         -D LCMS2_INCLUDE_DIR="%LCMS2_DIR%\\include" ^
         -D LCMS2_LIBRARIES="%LCMS2_DIR%\\out\\Release\\src\\liblcms2.a"
 
-    if "%1"=="skip-release" (
-        cmake --build . --config Debug
-        cmake --install . --config Debug
-    ) else (
-        cmake --build . --config Debug
-        cmake --install . --config Debug
-        cmake --build .
-        cmake --install .
-    )
+    cmake --build . --config Debug
+    cmake --install . --config Debug
+    cmake --build .
+    cmake --install .
 """)
 
 stage('tg_owt', """
