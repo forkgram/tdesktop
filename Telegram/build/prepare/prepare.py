@@ -1649,9 +1649,11 @@ win:
     )
     cd ..
 
-    SET CONFIGURATIONS=-debug
-release:
-    SET CONFIGURATIONS=-debug-and-release
+    if "%1"=="skip-release" (
+        SET CONFIGURATIONS=-debug
+    ) else (
+        SET CONFIGURATIONS=-debug-and-release
+    )
 win:
     """ + removeDir('"%LIBS_DIR%\\Qt' + qt + '"') + """
     SET MOZJPEG_DIR=%LIBS_DIR%\\mozjpeg
