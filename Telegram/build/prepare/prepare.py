@@ -1647,11 +1647,7 @@ win:
     )
     cd ..
 
-    if "%1"=="skip-release" (
-        SET CONFIGURATIONS=-debug
-    ) else (
-        SET CONFIGURATIONS=-debug-and-release
-    )
+    SET CONFIGURATIONS=-release
 win:
     """ + removeDir('"%LIBS_DIR%\\Qt' + qt + '"') + """
     SET MOZJPEG_DIR=%LIBS_DIR%\\mozjpeg
@@ -1700,8 +1696,6 @@ win:
         -D LCMS2_INCLUDE_DIR="%LCMS2_DIR%\\include" ^
         -D LCMS2_LIBRARIES="%LCMS2_DIR%\\out\\Release\\src\\liblcms2.a"
 
-    cmake --build . --config Debug
-    cmake --install . --config Debug
     cmake --build .
     cmake --install .
 """)
