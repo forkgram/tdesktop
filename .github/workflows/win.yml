@@ -11,14 +11,9 @@ jobs:
 
     strategy:
       matrix:
-        arch: [x64_x86, x64, arm64]
-        qt: ["", qt6]
-        generator: ["", "Ninja Multi-Config"]
-        exclude:
-          - arch: arm64
-            qt: ""
-          - arch: x64_x86
-            qt: qt6
+        arch: [x64]
+        qt: [""]
+        generator: [""]
 
     env:
       UPLOAD_ARTIFACT: "true"
@@ -35,7 +30,7 @@ jobs:
           mkdir %userprofile%\TBuild\Libraries
           mklink /d %GITHUB_WORKSPACE%\TBuild %userprofile%\TBuild
           echo TBUILD=%GITHUB_WORKSPACE%\TBuild>>%GITHUB_ENV%
-          echo LibrariesPath=%GITHUB_WORKSPACE%\TBuild\Libraries${{ matrix.arch == 'x64' && '\win64' || '' }}>>%GITHUB_ENV%
+          echo LibrariesPath=%GITHUB_WORKSPACE%\TBuild\Libraries${{ matrix.arch == 'x64' && '\\win64' || '' }}>>%GITHUB_ENV%
 
       - name: Get repository name.
         shell: bash
@@ -64,19 +59,6 @@ jobs:
           git config --global user.email "you@example.com"
           git config --global user.name "Sample"
 
-      - name: Install VS 2026 Build Tools.
-        if: matrix.arch == 'arm64'
-        shell: pwsh
-        run: |
-          Invoke-WebRequest -Uri https://aka.ms/vs/18/stable/vs_buildtools.exe -OutFile vs_buildtools.exe
-          $p = Start-Process -FilePath .\vs_buildtools.exe -Wait -PassThru -ArgumentList `
-            '--quiet','--wait','--norestart','--nocache', `
-            '--add','Microsoft.VisualStudio.Workload.VCTools', `
-            '--add','Microsoft.VisualStudio.Component.VC.Tools.ARM64', `
-            '--add','Microsoft.VisualStudio.Component.VC.ATL.ARM64'
-          Remove-Item vs_buildtools.exe -Force
-          if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { exit $p.ExitCode }
-
       - uses: Eden-CI/msvc-dev-cmd@master
         name: Native Tools Command Prompt.
         with:
@@ -86,12 +68,59 @@ jobs:
 
       - name: NuGet sources.
         run: |
-          nuget sources Disable -Name "Microsoft Visual Studio Offline Packages"
-          nuget sources Add -Source https://api.nuget.org/v3/index.json & exit 0
+          nuget sources Disable -Name "Microsoft Visual Studio Offline Packages" 2>nul
+
+      - name: Install ATL.
+        shell: cmd
+        run: |
+          for /f "usebackq delims=" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do set "VSPATH=%%i"
+          echo VS install path: %VSPATH%
+          echo VCToolsVersion: %VCToolsVersion%
+          if exist "%VSPATH%\VC\Tools\MSVC\%VCToolsVersion%\atlmfc\include\atlbase.h" (
+            echo ATL headers already present in MSVC toolset, skipping install.
+            exit /b 0
+          )
+          echo Attempting to install ATL component via vs_installer.exe...
+          "%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vs_installer.exe" modify --installPath "%VSPATH%" --add Microsoft.VisualStudio.Component.VC.ATL --quiet --wait --norestart
+          echo vs_installer.exe returned: %errorlevel%
+          if exist "%VSPATH%\VC\Tools\MSVC\%VCToolsVersion%\atlmfc\include\atlbase.h" (
+            echo ATL headers installed successfully via vs_installer.exe.
+            exit /b 0
+          )
+          echo vs_installer.exe did not install ATL, trying choco...
+          choco install visualstudio2022-workload-vctools -y --no-progress --package-parameters "--quiet --wait --norestart" || echo choco install returned: %errorlevel%
+          if exist "%VSPATH%\VC\Tools\MSVC\%VCToolsVersion%\atlmfc\include\atlbase.h" (
+            echo ATL headers installed successfully via choco.
+            exit /b 0
+          )
+          echo Searching for ATL headers in other VS installations...
+          for /f "usebackq delims=" %%j in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -all -property installationPath`) do (
+            for /d %%m in ("%%j\VC\Tools\MSVC\*") do (
+              if exist "%%m\atlmfc\include\atlbase.h" (
+                echo ATL found at %%m\atlmfc, copying to primary installation...
+                xcopy /E /I /Y "%%m\atlmfc" "%VSPATH%\VC\Tools\MSVC\%VCToolsVersion%\atlmfc"
+                if not errorlevel 1 (
+                  echo ATL headers copied successfully from other VS installation.
+                  exit /b 0
+                )
+              )
+            )
+          )
+          for /f "usebackq delims=" %%j in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -all -property installationPath`) do (
+            if exist "%%j\atlmfc\include\atlbase.h" (
+              echo ATL found at %%j\atlmfc, copying to primary installation...
+              mkdir "%VSPATH%\VC\Tools\MSVC\%VCToolsVersion%\atlmfc" 2>nul
+              xcopy /E /I /Y "%%j\atlmfc\include" "%VSPATH%\VC\Tools\MSVC\%VCToolsVersion%\atlmfc\include"
+              if exist "%%j\atlmfc\lib" xcopy /E /I /Y "%%j\atlmfc\lib" "%VSPATH%\VC\Tools\MSVC\%VCToolsVersion%\atlmfc\lib"
+              exit /b 0
+            )
+          )
+          echo ERROR: ATL headers not found. dump_syms build requires ATL.
+          exit /b 1
 
       - name: ThirdParty cache.
         id: cache-third-party
-        uses: actions/cache@v6
+        uses: actions/cache@v5
         with:
           path: ${{ env.TBUILD }}\ThirdParty
           key: ${{ runner.OS }}-${{ runner.arch }}-third-party-${{ env.CACHE_KEY }}
@@ -99,7 +128,7 @@ jobs:
 
       - name: Libraries cache.
         id: cache-libs
-        uses: actions/cache@v6
+        uses: actions/cache@v5
         with:
           path: |
             ${{ env.LibrariesPath }}\*
@@ -112,7 +141,7 @@ jobs:
 
       - name: Qt cache.
         id: cache-qt
-        uses: actions/cache@v6
+        uses: actions/cache@v5
         with:
           path: |
             ${{ env.LibrariesPath }}\[qQ]t[_-]*
@@ -122,7 +151,7 @@ jobs:
 
       - name: Libraries.
         run: |
-          %TBUILD%\%REPO_NAME%\Telegram\build\prepare\win.bat skip-release silent ${{ matrix.qt }}
+          %TBUILD%\%REPO_NAME%\Telegram\build\prepare\win.bat silent ${{ matrix.qt }}
 
       - name: Read configuration matrix.
         shell: bash
@@ -147,7 +176,7 @@ jobs:
           GENERATOR=""
           if [ -n "${{ matrix.generator }}" ]; then
             GENERATOR="-G \"${{ matrix.generator }}\""
-            echo "Generator from matrix: $GENERATOR"
+            echo "Generator: $GENERATOR"
             ARTIFACT_NAME="${ARTIFACT_NAME} ${{ matrix.generator }}"
           fi
           echo "TDESKTOP_BUILD_GENERATOR=$GENERATOR" >> $GITHUB_ENV
@@ -158,18 +187,14 @@ jobs:
           DEFINE=""
           if [ -n "${{ matrix.defines }}" ]; then
             DEFINE="-D ${{ matrix.defines }}=ON"
-            echo "Define from matrix: $DEFINE"
+            echo "Define: $DEFINE"
             ARTIFACT_NAME="${ARTIFACT_NAME} ${{ matrix.defines }}"
           fi
           echo "TDESKTOP_BUILD_DEFINE=$DEFINE" >> $GITHUB_ENV
 
           echo "ARTIFACT_NAME=$ARTIFACT_NAME" >> $GITHUB_ENV
 
-          API="-D TDESKTOP_API_TEST=ON"
-          if [ $GITHUB_REF == 'refs/heads/nightly' ]; then
-            echo "Use the open credentials."
-            API="-D TDESKTOP_API_ID=611335 -D TDESKTOP_API_HASH=d524b414d21f4d37f08684c1df41ac9c"
-          fi
+          API="-D TDESKTOP_API_ID=${{ secrets.API_ID }} -D TDESKTOP_API_HASH=${{ secrets.API_HASH }}"
           echo "TDESKTOP_BUILD_API=$API" >> $GITHUB_ENV
 
       - name: Free up some disk space.
@@ -186,19 +211,19 @@ jobs:
           %TDESKTOP_BUILD_ARCH% ^
           ${{ matrix.qt }} ^
           %TDESKTOP_BUILD_API% ^
-          -D CMAKE_CONFIGURATION_TYPES=Debug ^
+          -D CMAKE_CONFIGURATION_TYPES=Release ^
           -D CMAKE_COMPILE_WARNING_AS_ERROR=ON ^
           -D CMAKE_MSVC_DEBUG_INFORMATION_FORMAT= ^
           -D DESKTOP_APP_DISABLE_AUTOUPDATE=OFF ^
           -D DESKTOP_APP_DISABLE_CRASH_REPORTS=OFF ^
           %TDESKTOP_BUILD_DEFINE%
 
-          cmake --build ..\out --config Debug --parallel
+          cmake --build ..\out --config Release --parallel
 
       - name: Move artifact.
         if: (env.UPLOAD_ARTIFACT == 'true') || (github.ref == 'refs/heads/nightly')
         run: |
-          set OUT=%TBUILD%\%REPO_NAME%\out\Debug
+          set OUT=%TBUILD%\%REPO_NAME%\out\Release
           mkdir artifact
           move %OUT%\Telegram.exe artifact/
           move %OUT%\Updater.exe artifact/
