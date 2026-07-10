@@ -157,12 +157,14 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL 2>/dev/null || true
           sudo rm -rf "$AGENT_TOOLSDIRECTORY" 2>/dev/null || true
           docker rmi $(docker images -q) 2>/dev/null || true
+          sudo rm -rf /usr/local/.ghcup /usr/local/share/powershell /usr/local/share/chromium /usr/local/lib/node_modules 2>/dev/null || true
+          sudo rm -rf /opt/microsoft /opt/az 2>/dev/null || true
           echo "Disk after:"
           df -h C: || true
 
       - name: Libraries.
         run: |
-          %TBUILD%\%REPO_NAME%\Telegram\build\prepare\win.bat skip-release silent ${{ matrix.qt }}
+          %TBUILD%\%REPO_NAME%\Telegram\build\prepare\win.bat silent ${{ matrix.qt }}
 
       - name: Read configuration matrix.
         shell: bash
