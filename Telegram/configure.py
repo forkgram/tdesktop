@@ -30,7 +30,6 @@ if sys.platform == 'win32' and 'COMSPEC' not in os.environ:
 scriptName = os.path.basename(scriptPath)
 
 arguments = sys.argv[1:]
-
 officialTarget = ''
 officialTargetFile = scriptPath + '/build/target'
 if os.path.isfile(officialTargetFile):
@@ -51,7 +50,21 @@ if not qt_version.resolve(arch):
 if 'qt6' in arguments:
     arguments.remove('qt6')
 
+# Support command line API credentials (newer format)
+api_id = ''
+api_hash = ''
+remaining_args = []
+for arg in arguments:
+    if arg.startswith('-DTDESKTOP_API_ID='):
+        api_id = arg.split('=', 1)[1]
+    elif arg.startswith('-DTDESKTOP_API_HASH='):
+        api_hash = arg.split('=', 1)[1]
+    else:
+        remaining_args.append(arg)
+arguments = remaining_args
+
 if officialTarget != '':
+    # Official build: read from file
     officialApiIdFile = scriptPath + '/../../DesktopPrivate/custom_api_id.h'
     if not os.path.isfile(officialApiIdFile):
         error('DesktopPrivate/custom_api_id.h not found.')
@@ -60,10 +73,26 @@ if officialTarget != '':
             apiIdMatch = re.search(r'ApiId\s+=\s+(\d+)', line)
             apiHashMatch = re.search(r'ApiHash\s+=\s+"([a-fA-F\d]+)"', line)
             if apiIdMatch:
-                arguments.append('-DTDESKTOP_API_ID=' + apiIdMatch.group(1))
+                api_id = apiIdMatch.group(1)
             elif apiHashMatch:
-                arguments.append('-DTDESKTOP_API_HASH=' + apiHashMatch.group(1))
-    if arch != '':
-        arguments.append(arch)
+                api_hash = apiHashMatch.group(1)
+
+# Add API credentials as cmake defines
+if api_id:
+    arguments.append('-DTDESKTOP_API_ID=' + api_id)
+if api_hash:
+    arguments.append('-DTDESKTOP_API_HASH=' + api_hash)
+
+# Determine architecture from officialTarget or detect from arguments
+if not arch:
+    # Try to detect from arguments (newer workflow format)
+    for arg in arguments:
+        if arg in ['x86', 'x64', 'arm']:
+            arch = arg
+            break
+
+# Pass arch to run_cmake for proper -A flag
+if arch and arch not in arguments:
+    arguments.append(arch)
 
 finish(run_cmake.run(scriptName, arguments))
