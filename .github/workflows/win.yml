@@ -12,7 +12,7 @@ jobs:
     strategy:
       matrix:
         arch: [x64]
-        qt: [""]
+        qt: [qt6]
         generator: [""]
 
     env:
