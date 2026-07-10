@@ -1545,9 +1545,11 @@ win:
     )
     cd ..
 
-    SET CONFIGURATIONS=-debug
-release:
-    SET CONFIGURATIONS=-debug-and-release
+    if "%1"=="skip-release" (
+        SET CONFIGURATIONS=-debug
+    ) else (
+        SET CONFIGURATIONS=-debug-and-release
+    )
 win:
     """ + removeDir('"%LIBS_DIR%\\Qt-' + qt + '"') + """
     SET ANGLE_DIR=%LIBS_DIR%\\tg_angle
