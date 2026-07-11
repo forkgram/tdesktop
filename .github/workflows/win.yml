@@ -237,7 +237,7 @@ jobs:
       - name: Move artifact.
         if: (env.UPLOAD_ARTIFACT == 'true') || (github.ref == 'refs/heads/nightly')
         run: |
-          set OUT=%TBUILD%\%REPO_NAME%\out\Release
+          set OUT=%TBUILD%\%REPO_NAME%\out\RelWithDebInfo
           mkdir artifact
           move %OUT%\Telegram.exe artifact/
           move %OUT%\Updater.exe artifact/
