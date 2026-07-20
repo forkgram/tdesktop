@@ -1,0 +1,154 @@
+From 6197dd37bab3366a52f53b01b8388f7cd5654f52 Mon Sep 17 00:00:00 2001
+From: 23rd <23rd@vivaldi.net>
+Date: Thu, 23 Apr 2026 07:19:01 +0000
+Subject: [PATCH 1/4] Enabled DirectComposition in Win7 path and
+ FLIP_SEQUENTIAL for DComp.
+
+---
+ qtbase/src/gui/rhi/qrhid3d11.cpp | 83 +++++++++++++++++++++++++++-----
+ 1 file changed, 71 insertions(+), 12 deletions(-)
+
+diff --git a/qtbase/src/gui/rhi/qrhid3d11.cpp b/qtbase/src/gui/rhi/qrhid3d11.cpp
+index 04c021cc..84535960 100644
+--- a/qtbase/src/gui/rhi/qrhid3d11.cpp
++++ b/qtbase/src/gui/rhi/qrhid3d11.cpp
+@@ -5300,9 +5300,35 @@ bool QD3D11SwapChain::createOrResizeWin7()
+     QRHI_RES_RHI(QRhiD3D11);
+     HRESULT hr;
+ 
+-    // On Windows 7, flip model is not compatible with transparency (requires DirectComposition).
+-    // Force the legacy path if alpha is requested.
+-    bool canUseFlipModel = !(m_flags.testFlag(SurfaceHasPreMulAlpha) || m_flags.testFlag(SurfaceHasNonPreMulAlpha));
++    const bool needsAlpha = m_flags.testFlag(SurfaceHasPreMulAlpha) || m_flags.testFlag(SurfaceHasNonPreMulAlpha);
++    bool canUseFlipModel = true;
++
++    // Try DirectComposition for alpha transparency (available on Win8+).
++    // On actual Win7, DirectComposition is not available, so alpha will not work.
++    if (needsAlpha && !rhiD->useLegacySwapchainModel && rhiD->ensureDirectCompositionDevice()) {
++        HWND hwnd = reinterpret_cast<HWND>(m_window->winId());
++        HRESULT dcHr;
++        if (!dcompTarget) {
++            dcHr = rhiD->dcompDevice->CreateTargetForHwnd(hwnd, false, &dcompTarget);
++            if (FAILED(dcHr)) {
++                qWarning("Failed to create Direct Composition target for the window: %s",
++                         qPrintable(QSystemError::windowsComString(dcHr)));
++            }
++        }
++        if (dcompTarget && !dcompVisual) {
++            dcHr = rhiD->dcompDevice->CreateVisual(&dcompVisual);
++            if (FAILED(dcHr)) {
++                qWarning("Failed to create DirectComposition visual: %s",
++                         qPrintable(QSystemError::windowsComString(dcHr)));
++            }
++        }
++        if (window->requestedFormat().alphaBufferSize() <= 0)
++            qWarning("Swapchain says surface has alpha but the window has no alphaBufferSize set. "
++                     "This may lead to problems.");
++    }
++    // On Win7 without DirectComposition, flip model cannot do alpha.
++    if (needsAlpha && !dcompVisual)
++        canUseFlipModel = false;
+ 
+     swapInterval = m_flags.testFlag(QRhiSwapChain::NoVSync) ? 0 : 1;
+     swapChainFlags = 0;
+@@ -5318,7 +5344,7 @@ bool QD3D11SwapChain::createOrResizeWin7()
+         bool flipModelAttempted = false;
+         if (canUseFlipModel) {
+             flipModelAttempted = true;
+-            // --- TRY MODERN FLIP-MODEL PATH (DXGI 1.2, requires Win7 Platform Update) ---
++            // --- TRY MODERN FLIP-MODEL PATH (DXGI 1.2) ---
+             IDXGIFactory2 *fac = static_cast<IDXGIFactory2 *>(rhiD->dxgiFactory);
+             if (fac) {
+                 DXGI_SWAP_CHAIN_DESC1 desc = {};
+@@ -5329,15 +5355,36 @@ bool QD3D11SwapChain::createOrResizeWin7()
+                 desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+                 desc.BufferCount = BUFFER_COUNT;
+                 desc.Scaling = DXGI_SCALING_NONE;
+-                desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL; // Safest flip model
++                desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
+                 desc.Flags = swapChainFlags;
+ 
++                if (dcompVisual) {
++                    desc.AlphaMode = DXGI_ALPHA_MODE_PREMULTIPLIED;
++                    desc.Scaling = DXGI_SCALING_STRETCH;
++                }
++
+                 IDXGISwapChain1 *sc1;
+-                hr = fac->CreateSwapChainForHwnd(rhiD->dev, hwnd, &desc, nullptr, nullptr, &sc1);
+-                if (SUCCEEDED(hr))
++                if (dcompVisual)
++                    hr = fac->CreateSwapChainForComposition(rhiD->dev, &desc, nullptr, &sc1);
++                else
++                    hr = fac->CreateSwapChainForHwnd(rhiD->dev, hwnd, &desc, nullptr, nullptr, &sc1);
++                if (SUCCEEDED(hr)) {
+                     swapChain = sc1;
++                    if (dcompVisual) {
++                        HRESULT dcHr = dcompVisual->SetContent(sc1);
++                        if (SUCCEEDED(dcHr)) {
++                            dcHr = dcompTarget->SetRoot(dcompVisual);
++                            if (FAILED(dcHr))
++                                qWarning("Failed to associate DirectComposition visual with the target: %s",
++                                         qPrintable(QSystemError::windowsComString(dcHr)));
++                        } else {
++                            qWarning("Failed to set content for DirectComposition visual: %s",
++                                     qPrintable(QSystemError::windowsComString(dcHr)));
++                        }
++                    }
++                }
+             } else {
+-                hr = E_FAIL; // Should not happen if createDXGIFactory2 succeeded, but for safety.
++                hr = E_FAIL;
+             }
+         }
+ 
+@@ -5346,8 +5393,8 @@ bool QD3D11SwapChain::createOrResizeWin7()
+                 qWarning("QRhiD3D11: Flip model swapchain creation failed, falling back to legacy discard model. This may happen on Windows 7 without the Platform Update.");
+             
+             // --- FALLBACK TO LEGACY DISCARD PATH (DXGI 1.1, works on all Win7) ---
+-            canUseFlipModel = false; // Ensure we stick to legacy logic now
+-            swapChainFlags = 0; // Tearing is not supported in this mode
++            canUseFlipModel = false;
++            swapChainFlags = 0;
+ 
+             DXGI_SWAP_CHAIN_DESC desc = {};
+             desc.BufferDesc.Width = UINT(pixelSize.width());
+@@ -5355,7 +5402,7 @@ bool QD3D11SwapChain::createOrResizeWin7()
+             desc.BufferDesc.Format = colorFormat;
+             desc.SampleDesc.Count = 1;
+             desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+-            desc.BufferCount = 1; // Discard model uses 1 back buffer
++            desc.BufferCount = 1;
+             desc.OutputWindow = hwnd;
+             desc.Windowed = TRUE;
+             desc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+@@ -5368,7 +5415,8 @@ bool QD3D11SwapChain::createOrResizeWin7()
+             return false;
+         }
+ 
+-        rhiD->dxgiFactory->MakeWindowAssociation(hwnd, DXGI_MWA_NO_WINDOW_CHANGES);
++        if (!dcompVisual)
++            rhiD->dxgiFactory->MakeWindowAssociation(hwnd, DXGI_MWA_NO_WINDOW_CHANGES);
+ 
+     } else { // Resizing existing swap chain
+         releaseBuffers();
+@@ -5574,6 +5622,17 @@ bool QD3D11SwapChain::createOrResize()
+             // SCALING_NONE. So with semi-transparency requested we are forced
+             // to SCALING_STRETCH.
+             desc.Scaling = DXGI_SCALING_STRETCH;
++
++            // A DComp-composited swap chain is a desktop-composition surface,
++            // not a game framebuffer: FLIP_SEQUENTIAL preserves back-buffer
++            // contents between frames and matches what browser engines
++            // (Chromium, Edge WebView2) use for their DComp layers. Staying
++            // with FLIP_DISCARD makes NVIDIA/AMD driver overlays treat the
++            // swap chain as a borderless-fullscreen game and inject in-game
++            // overlay hooks, which corrupts premultiplied-alpha output the
++            // first time the window transitions from idle to active
++            // presenting.
++            desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
+         }
+ 
+         IDXGIFactory2 *fac = static_cast<IDXGIFactory2 *>(rhiD->dxgiFactory);
+-- 
+2.53.0.windows.2
+

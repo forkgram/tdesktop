@@ -1,0 +1,26 @@
+From 51b277c0130f552288e0a0756cac3944c0041277 Mon Sep 17 00:00:00 2001
+From: 23rd <23rd@vivaldi.net>
+Date: Mon, 20 Jul 2026 18:05:26 +0000
+Subject: [PATCH 4/4] Routed new 6.11 notifyRoleChange UIA call through
+ wrapper.
+
+---
+ .../platforms/windows/uiautomation/qwindowsuiamainprovider.cpp  | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/qtbase/src/plugins/platforms/windows/uiautomation/qwindowsuiamainprovider.cpp b/qtbase/src/plugins/platforms/windows/uiautomation/qwindowsuiamainprovider.cpp
+index a6b452b1..5c4407e2 100644
+--- a/qtbase/src/plugins/platforms/windows/uiautomation/qwindowsuiamainprovider.cpp
++++ b/qtbase/src/plugins/platforms/windows/uiautomation/qwindowsuiamainprovider.cpp
+@@ -184,7 +184,7 @@ void QWindowsUiaMainProvider::notifyRoleChange(QAccessibleEvent *event)
+         if (auto provider = providerForAccessible(accessible)) {
+             QComVariant oldVal;
+             QComVariant newVal{ roleToControlTypeId(accessible->role()) };
+-            UiaRaiseAutomationPropertyChangedEvent(provider.Get(), UIA_ControlTypePropertyId,
++            QWindowsUiaWrapper::instance()->raiseAutomationPropertyChangedEvent(provider.Get(), UIA_ControlTypePropertyId,
+                                                    oldVal.get(), newVal.get());
+         }
+     }
+-- 
+2.53.0.windows.2
+

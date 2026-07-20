@@ -1,0 +1,85 @@
+From 0cdea6db434794e4faf75d47b6e322a0a0a558c1 Mon Sep 17 00:00:00 2001
+From: 23rd <23rd@vivaldi.net>
+Date: Mon, 20 Jul 2026 17:37:47 +0000
+Subject: [PATCH 3/4] Added three-way port script for moving overlay to new Qt.
+
+---
+ .gitignore               |  1 +
+ tools/port_to_version.sh | 57 ++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 58 insertions(+)
+ create mode 100644 .gitignore
+ create mode 100644 tools/port_to_version.sh
+
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 00000000..c76a367e
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1 @@
++.port/
+diff --git a/tools/port_to_version.sh b/tools/port_to_version.sh
+new file mode 100644
+index 00000000..eb84e6f5
+--- /dev/null
++++ b/tools/port_to_version.sh
+@@ -0,0 +1,57 @@
++#!/bin/bash
++# Port this Windows 7 qtbase overlay from one Qt version to another.
++#
++#   tools/port_to_version.sh <from-tag> <to-tag> [workdir]
++#   tools/port_to_version.sh v6.10.0 v6.11.1
++#
++# Three-way merges every overlay file: ours = this repo's file, base = the
++# pristine qtbase file at <from-tag>, theirs = the pristine file at <to-tag>.
++# Files the overlay adds (restored from older Qt) are carried over untouched.
++# Writes the result to <workdir>/out/qtbase and prints a per-file report;
++# copy it over qtbase/ once the conflicts are resolved by hand.
++set -u
++
++FROM=${1:?usage: port_to_version.sh <from-tag> <to-tag> [workdir]}
++TO=${2:?usage: port_to_version.sh <from-tag> <to-tag> [workdir]}
++WORK=${3:-$(dirname "$0")/../.port}
++REPO=$(cd "$(dirname "$0")/.." && pwd)
++
++mkdir -p "$WORK"
++for tag in "$FROM" "$TO"; do
++    if [ ! -d "$WORK/qtbase-$tag" ]; then
++        echo "cloning pristine qtbase $tag ..."
++        git clone --depth 1 --branch "$tag" --single-branch \
++            https://github.com/qt/qtbase.git "$WORK/qtbase-$tag" || exit 1
++    fi
++done
++
++OUT=$WORK/out/qtbase
++rm -rf "$OUT"; mkdir -p "$OUT"
++conflicts=0
++
++printf "%-62s %-10s %8s %8s\n" "FILE" "STATUS" "W7DELTA" "QTCHG"
++cd "$REPO/qtbase" || exit 1
++while read -r f; do
++    ours="$REPO/qtbase/$f"; base="$WORK/qtbase-$FROM/$f"; theirs="$WORK/qtbase-$TO/$f"
++    mkdir -p "$OUT/$(dirname "$f")"
++    if [ ! -f "$base" ]; then                    # added by the overlay
++        cp "$ours" "$OUT/$f"; st="NEW"; w7=$(wc -l < "$ours"); qt="-"
++    elif [ ! -f "$theirs" ]; then                # dropped by the new Qt
++        cp "$ours" "$OUT/$f"; st="GONE-IN-$TO"; w7="-"; qt="-"
++    else
++        w7=$(diff "$base" "$ours" | grep -c '^[<>]')
++        qt=$(diff "$base" "$theirs" | grep -c '^[<>]')
++        if [ "$w7" = "0" ]; then                 # overlay file has no Win7 delta
++            cp "$theirs" "$OUT/$f"; st="NOOP"
++        else
++            git merge-file -p --diff3 "$ours" "$base" "$theirs" > "$OUT/$f" 2>/dev/null
++            if [ $? -eq 0 ]; then st="CLEAN"; else st="CONFLICT"; conflicts=$((conflicts + 1)); fi
++        fi
++    fi
++    printf "%-62s %-10s %8s %8s\n" "$f" "$st" "$w7" "$qt"
++done < <(find . -type f | sed 's|^\./||' | sort)
++
++echo
++echo "result in $OUT ($conflicts file(s) with conflict markers)"
++echo "after resolving, verify the tdesktop patches still apply:"
++echo "  cp -r $OUT/src/. <pristine $TO>/src/ && git apply <patches>/qtbase_*/*.patch"
+-- 
+2.53.0.windows.2
+

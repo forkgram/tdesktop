@@ -1,0 +1,3558 @@
+From 7302ad482d221e7a4f25740d99b08e63efbe96cb Mon Sep 17 00:00:00 2001
+From: 23rd <23rd@vivaldi.net>
+Date: Mon, 20 Jul 2026 17:29:27 +0000
+Subject: [PATCH 2/4] Ported Windows 7 backport from Qt 6.10.0 to Qt 6.11.1.
+
+Three-way merged all 39 overlay files against pristine qtbase v6.10.0
+and v6.11.1. Notes on the parts that were not mechanical:
+
+- qwindowstheme.cpp: Qt 6.11 restructured qt_accentColor() into "try
+  WinRT, fall back to the DWM registry key", which is what the backport
+  did by hand. Kept upstream's shape and only added the
+  IsWindows10OrGreater() gate so WinRT UISettings is never activated on
+  Windows 7/8.1. The Win7 delta here shrank from 80 to 15 lines.
+- qwindowscontext.cpp: Qt 6.11 moved window class registration into the
+  new qwindowswindowclassregistry, so only the dynamic user32/shcore
+  symbol resolution and the QLegacyShims fallbacks remain.
+- qeventdispatcher_win.cpp: moved the dynamic SetCoalescableTimer lookup
+  inside the existing "if (!ok)" block so tdesktop's stock
+  0008-fix-race-in-windows-timers.patch applies without local edits.
+
+Verified the new Qt 6.11 code stays Win7-safe: qatomicwait falls back to
+its mutex implementation because the backport disables QtFutex on
+Windows, and qioring_win resolves every IoRing entry point through
+GetProcAddress.
+---
+ README.md                                     |   3 +-
+ qtbase/src/corelib/CMakeLists.txt             |  84 +++++-
+ .../corelib/kernel/qeventdispatcher_win.cpp   |  18 +-
+ qtbase/src/corelib/kernel/qfunctions_win.cpp  |   1 +
+ qtbase/src/corelib/text/qlocale_win.cpp       |   5 +-
+ qtbase/src/corelib/text/qstringconverter.cpp  | 261 ++++++++++++++--
+ qtbase/src/corelib/thread/qmutex.h            |   4 +-
+ qtbase/src/corelib/thread/qthread_win.cpp     |  24 +-
+ qtbase/src/gui/rhi/qdxgivsyncservice.cpp      |   6 +
+ qtbase/src/gui/rhi/qrhid3d11.cpp              | 101 ++++---
+ qtbase/src/gui/rhi/qrhid3d11_p.h              |  65 +++-
+ qtbase/src/gui/rhi/qrhid3d12.cpp              |  76 ++++-
+ .../text/windows/qwindowsfontdatabasebase.cpp |  12 +-
+ .../plugins/platforms/direct2d/CMakeLists.txt |   6 +-
+ .../plugins/platforms/windows/CMakeLists.txt  |   6 +-
+ .../platforms/windows/qwin10helpers.cpp       |   1 +
+ .../platforms/windows/qwindowscontext.cpp     | 183 +-----------
+ .../platforms/windows/qwindowscontext.h       |   7 +-
+ .../platforms/windows/qwindowsdrag.cpp        |   1 +
+ .../platforms/windows/qwindowsintegration.cpp |  15 +-
+ .../platforms/windows/qwindowskeymapper.cpp   |  14 +-
+ .../windows/qwindowspointerhandler.cpp        |  27 +-
+ .../platforms/windows/qwindowsscreen.cpp      |  52 +++-
+ .../platforms/windows/qwindowstheme.cpp       | 113 +++----
+ .../platforms/windows/qwindowswindow.cpp      | 158 +++++++---
+ .../uiautomation/qwindowsuiaaccessibility.cpp |   6 +-
+ .../uiautomation/qwindowsuiamainprovider.cpp  |  64 ++--
+ .../modernwindows/qwindowsvistastyle.cpp      | 280 ++++++++----------
+ .../modernwindows/qwindowsvistastyle_p_p.h    |  23 ++
+ qtbase/src/widgets/styles/qwindowsstyle.cpp   | 126 ++++----
+ 30 files changed, 1064 insertions(+), 678 deletions(-)
+
+diff --git a/README.md b/README.md
+index 4e5f27d3..f557e948 100644
+--- a/README.md
++++ b/README.md
+@@ -1,6 +1,6 @@
+ This repository provides a backport of the Qt 6 qtbase module, tailored for compatibility with Windows 7, 8 and 8.1. It contains patched source files from the qtbase module, along with some additional required files. To apply the backport, simply copy the contents of the src folder into your qtbase/src directory, replacing the existing files.
+ 
+-The most recent supported version is **6.10.0** however many older versions are supported as well (see **Older versions** section).
++The most recent supported version is **6.11.1** however many older versions are supported as well (see **Older versions** section).
+ 
+ This approach builds upon the methodology discussed in this forum [thread](https://forum.qt.io/topic/133002/qt-creator-6-0-1-and-qt-6-2-2-running-on-windows-7/60) but offers significant enhancements, including important fallbacks to the default Qt 6 behavior when running on newer versions of Windows.
+ 
+@@ -24,6 +24,7 @@ Many of other Qt 6 modules are known to work fine on Windows 7 without modificat
+ - QRhi using DirectX 11/12 is not ported
+ 
+ ### Older versions:
++- [Qt 6.10.0](https://github.com/qr243vbi/qt6windows7/releases/tag/v6.10.0_x86_64)
+ - [Qt 6.9.3](https://github.com/crystalidea/qt6windows7/releases/tag/v6.9.3)
+ - [Qt 6.8.3](https://github.com/crystalidea/qt6windows7/releases/tag/v6.8.3)
+ - [Qt 6.8.2](https://github.com/crystalidea/qt6windows7/releases/tag/v6.8.2)
+diff --git a/qtbase/src/corelib/CMakeLists.txt b/qtbase/src/corelib/CMakeLists.txt
+index 4f5be0fe..47372b7b 100644
+--- a/qtbase/src/corelib/CMakeLists.txt
++++ b/qtbase/src/corelib/CMakeLists.txt
+@@ -16,7 +16,11 @@ qt_internal_extend_sbom(WrapZLIB::WrapZLIB
+ 
+ if(ANDROID)
+     set(corelib_extra_cmake_files
+-        "${CMAKE_CURRENT_SOURCE_DIR}/${QT_CMAKE_EXPORT_NAMESPACE}AndroidMacros.cmake")
++        "${CMAKE_CURRENT_SOURCE_DIR}/${QT_CMAKE_EXPORT_NAMESPACE}AndroidMacros.cmake"
++        "${CMAKE_CURRENT_SOURCE_DIR}/${QT_CMAKE_EXPORT_NAMESPACE}AndroidDynamicFeatureHelpers.cmake"
++        "${CMAKE_CURRENT_SOURCE_DIR}/${QT_CMAKE_EXPORT_NAMESPACE}AndroidGradleHelpers.cmake"
++        "${CMAKE_CURRENT_SOURCE_DIR}/${QT_CMAKE_EXPORT_NAMESPACE}AndroidPermissionHelpers.cmake"
++    )
+ endif()
+ if(WASM)
+     set(corelib_extra_cmake_files
+@@ -98,6 +102,7 @@ qt_internal_add_module(Core
+         global/qvolatile_p.h
+         global/q17memory.h
+         global/q20algorithm.h
++        global/q20bit.h
+         global/q20chrono.h
+         global/q20functional.h
+         global/q20iterator.h
+@@ -168,12 +173,14 @@ qt_internal_add_module(Core
+         kernel/qelapsedtimer.cpp kernel/qelapsedtimer.h
+         kernel/qeventloop.cpp kernel/qeventloop.h kernel/qeventloop_p.h
+         kernel/qfunctions_p.h
+-        kernel/qiterable.cpp kernel/qiterable.h kernel/qiterable_p.h
++        kernel/qiterable.cpp kernel/qiterable.h kernel/qiterable_impl.h
+         kernel/qmath.cpp kernel/qmath.h
++        kernel/qmetaassociation.cpp kernel/qmetaassociation.h
+         kernel/qmetacontainer.cpp kernel/qmetacontainer.h
+         kernel/qmetaobject.cpp kernel/qmetaobject.h kernel/qmetaobject_p.h
+         kernel/qmetaobject_moc_p.h
+         kernel/qmetaobjectbuilder.cpp kernel/qmetaobjectbuilder_p.h
++        kernel/qmetasequence.cpp kernel/qmetasequence.h
+         kernel/qmetatype.cpp kernel/qmetatype.h kernel/qmetatype_p.h
+         kernel/qmimedata.cpp kernel/qmimedata.h
+         kernel/qtmetamacros.h kernel/qtmocconstants.h kernel/qtmochelpers.h
+@@ -224,7 +231,6 @@ qt_internal_add_module(Core
+         text/qbytearraylist.cpp text/qbytearraylist.h
+         text/qbytearraymatcher.cpp text/qbytearraymatcher.h
+         text/qbytearrayview.h
+-        text/qbytedata_p.h
+         text/qchar.h
+         text/qcollator.cpp text/qcollator.h text/qcollator_p.h
+         text/qdoublescanprint_p.h
+@@ -253,6 +259,7 @@ qt_internal_add_module(Core
+         text/qvsnprintf.cpp
+         thread/qatomic.h
+         thread/qatomic_cxx11.h
++        thread/qatomicwait.cpp thread/qatomicwait_p.h
+         thread/qbasicatomic.h
+         thread/qgenericatomic.h
+         thread/qlocking_p.h
+@@ -304,6 +311,7 @@ qt_internal_add_module(Core
+         tools/qoffsetstringarray_p.h
+         tools/qpair.h
+         tools/qpoint.cpp tools/qpoint.h
++        tools/qquasivirtual_impl.h
+         tools/qqueue.h
+         tools/qrect.cpp tools/qrect.h
+         tools/qrefcount.cpp tools/qrefcount.h
+@@ -390,6 +398,11 @@ _qt_internal_setup_deploy_support()
+ 
+ add_dependencies(Core qmodule_pri)
+ 
++qt_internal_extend_target(Core CONDITION CMAKE_PROJECT_VERSION VERSION_LESS "7.0"
++    SOURCES
++        text/qstringconverter_base_deprecated.h
++)
++
+ if (NOT QT_NAMESPACE STREQUAL "")
+     set(core_namespace_defs "QT_NAMESPACE=${QT_NAMESPACE}")
+     if(QT_INLINE_NAMESPACE)
+@@ -398,6 +411,9 @@ if (NOT QT_NAMESPACE STREQUAL "")
+     target_compile_definitions(Core PUBLIC ${core_namespace_defs})
+     set_target_properties(Core PROPERTIES _qt_namespace "${QT_NAMESPACE}")
+     set_property(TARGET Core APPEND PROPERTY EXPORT_PROPERTIES _qt_namespace)
++
++    set_target_properties(Core PROPERTIES QT_NAMESPACE "${QT_NAMESPACE}")
++    set_property(TARGET Core APPEND PROPERTY EXPORT_PROPERTIES QT_NAMESPACE)
+ endif()
+ 
+ qt_generate_qconfig_cpp(global/qconfig.cpp.in global/qconfig.cpp)
+@@ -484,8 +500,11 @@ if(ANDROID)
+     set_property(TARGET Core APPEND PROPERTY QT_ANDROID_LIB_DEPENDENCIES
+         ${INSTALL_PLUGINSDIR}/platforms/libplugins_platforms_qtforandroid.so
+     )
+-    set_property(TARGET Core APPEND PROPERTY QT_ANDROID_PERMISSIONS
+-        android.permission.INTERNET android.permission.WRITE_EXTERNAL_STORAGE
++    qt_internal_add_android_permission(Core
++        NAME android.permission.WRITE_EXTERNAL_STORAGE
++    )
++    qt_internal_add_android_permission(Core
++        NAME android.permission.INTERNET
+     )
+ endif()
+ 
+@@ -552,6 +571,35 @@ qt_internal_extend_target(Core CONDITION QT_FEATURE_animation
+         animation/qvariantanimation.cpp animation/qvariantanimation.h animation/qvariantanimation_p.h
+ )
+ 
++if(QT_FEATURE_async_io)
++    qt_internal_extend_target(Core
++        SOURCES
++            io/qiooperation.cpp io/qiooperation_p.h io/qiooperation_p_p.h
++            io/qrandomaccessasyncfile.cpp io/qrandomaccessasyncfile_p.h io/qrandomaccessasyncfile_p_p.h
++    )
++
++    if(APPLE)
++        qt_internal_extend_target(Core
++            SOURCES
++                io/qrandomaccessasyncfile_darwin.mm
++        )
++    elseif((LINUX AND QT_FEATURE_liburing) OR (WIN32 AND QT_FEATURE_windows_ioring))
++        qt_internal_extend_target(Core
++            SOURCES
++                io/qrandomaccessasyncfile_qioring.cpp
++            DEFINES
++                QT_RANDOMACCESSASYNCFILE_QIORING
++        )
++    endif()
++    # This is the fallback condition that should be always available.
++    # TODO: try to rewrite it so that it does not depend on
++    # QT_FEATURE_future.
++    qt_internal_extend_target(Core
++        SOURCES
++            io/qrandomaccessasyncfile_threadpool.cpp
++    )
++endif()
++
+ # This needs to be done before one below adds kernel32 because the symbols we use
+ # from synchronization also appears in kernel32 in the version of MinGW we use in CI.
+ # However, when picking the symbols from libkernel32.a it will try to load the symbols
+@@ -596,6 +644,7 @@ qt_internal_extend_target(Core CONDITION WIN32
+         platform/windows/qcomptr_p.h
+         platform/windows/qbstr_p.h
+         platform/windows/qcomvariant_p.h
++        platform/windows/quniquehandle_types_windows.cpp platform/windows/quniquehandle_types_windows_p.h
+     LIBRARIES
+         advapi32
+         authz
+@@ -657,6 +706,7 @@ qt_internal_extend_target(Core CONDITION APPLE
+         kernel/qcore_mac.mm kernel/qcore_mac_p.h
+         kernel/qcoreapplication_mac.cpp
+         kernel/qeventdispatcher_cf.mm kernel/qeventdispatcher_cf_p.h
++        platform/darwin/qdarwinsecurityscopedfileengine.mm platform/darwin/qdarwinsecurityscopedfileengine_p.h
+     LIBRARIES
+         ${FWCoreFoundation}
+         ${FWFoundation}
+@@ -704,6 +754,18 @@ qt_internal_extend_target(Core CONDITION INTEGRITY
+         --pending_instantiations=128
+ )
+ 
++qt_internal_extend_target(Core CONDITION QT_FEATURE_liburing
++    SOURCES
++        io/qioring.cpp io/qioring_linux.cpp io/qioring_p.h
++    LIBRARIES
++        uring
++)
++
++qt_internal_extend_target(Core CONDITION QT_FEATURE_windows_ioring
++    SOURCES
++        io/qioring.cpp io/qioring_win.cpp io/qioring_p.h
++)
++
+ # Workaround for QTBUG-101411
+ # Remove if QCC (gcc version 8.3.0) for QNX 7.1.0 is no longer supported
+ qt_internal_extend_target(Core CONDITION QCC AND (CMAKE_CXX_COMPILER_VERSION VERSION_EQUAL "8.3.0")
+@@ -757,6 +819,7 @@ qt_internal_extend_target(Core CONDITION QT_FEATURE_thread
+     SOURCES
+         thread/qatomic.cpp
+         thread/qfutex_p.h
++        thread/qlatch.cpp thread/qlatch_p.h
+         thread/qmutex.cpp thread/qmutex_p.h
+         thread/qreadwritelock.cpp thread/qreadwritelock_p.h
+         thread/qthreadstorage.cpp thread/qthreadstorage_p.h
+@@ -898,7 +961,7 @@ qt_internal_extend_target(Core CONDITION WASM
+ 
+ qt_internal_extend_target(Core CONDITION MSVC AND CLANG
+     LIBRARIES
+-        clang_rt.builtins-x86_64
++        clang_rt.builtins-$<IF:$<STREQUAL:${TEST_architecture_arch},arm64>,aarch64,x86_64>
+ )
+ 
+ qt_internal_extend_target(Core CONDITION QT_FEATURE_icu
+@@ -985,7 +1048,7 @@ qt_internal_extend_target(Core
+ 
+ qt_internal_extend_target(Core
+     CONDITION
+-        QT_FEATURE_timezone AND UNIX
++        QT_FEATURE_timezone AND UNIX AND NOT VXWORKS
+         AND NOT ANDROID AND NOT APPLE AND NOT QT_FEATURE_timezone_tzdb
+     SOURCES
+         time/qtimezoneprivate_tz.cpp
+@@ -994,7 +1057,7 @@ qt_internal_extend_target(Core
+ qt_internal_extend_target(Core
+     CONDITION
+         QT_FEATURE_icu AND QT_FEATURE_timezone
+-        AND NOT UNIX AND NOT QT_FEATURE_timezone_tzdb
++        AND (VXWORKS OR NOT UNIX) AND NOT QT_FEATURE_timezone_tzdb
+     SOURCES
+         time/qtimezoneprivate_icu.cpp
+ )
+@@ -1171,6 +1234,7 @@ qt_internal_extend_target(Core CONDITION QT_FEATURE_itemmodel
+         itemmodels/qabstractitemmodel.cpp itemmodels/qabstractitemmodel.h itemmodels/qabstractitemmodel_p.h
+         itemmodels/qitemselectionmodel.cpp itemmodels/qitemselectionmodel.h itemmodels/qitemselectionmodel_p.h
+         itemmodels/qrangemodel.h itemmodels/qrangemodel_impl.h itemmodels/qrangemodel.cpp
++        itemmodels/qrangemodeladapter.h itemmodels/qrangemodeladapter_impl.h
+ )
+ 
+ qt_internal_extend_target(Core CONDITION QT_FEATURE_proxymodel
+@@ -1465,10 +1529,12 @@ endif()
+ 
+ qt_internal_extend_target(Core CONDITION WASM
+     SOURCES
++        platform/wasm/qwasmanimationdriver.cpp platform/wasm/qwasmanimationdriver_p.h
+         platform/wasm/qwasmglobal.cpp platform/wasm/qwasmglobal_p.h
+         platform/wasm/qstdweb.cpp platform/wasm/qstdweb_p.h
+         platform/wasm/qwasmsocket.cpp platform/wasm/qwasmsocket_p.h
+         platform/wasm/qwasmsuspendresumecontrol.cpp platform/wasm/qwasmsuspendresumecontrol_p.h
++        platform/wasm/qwasmlocalfileengine.cpp platform/wasm/qwasmlocalfileengine_p.h
+         kernel/qeventdispatcher_wasm.cpp kernel/qeventdispatcher_wasm_p.h
+ )
+ 
+@@ -1638,6 +1704,6 @@ function(qt_internal_library_deprecation_level)
+ endfunction()
+ qt_internal_library_deprecation_level()
+ 
+-if(QT_FEATURE_doc_snippets)
++if(QT_BUILD_DOC_SNIPPETS)
+     add_subdirectory(doc/snippets)
+ endif()
+diff --git a/qtbase/src/corelib/kernel/qeventdispatcher_win.cpp b/qtbase/src/corelib/kernel/qeventdispatcher_win.cpp
+index da521f29..57aaf721 100644
+--- a/qtbase/src/corelib/kernel/qeventdispatcher_win.cpp
++++ b/qtbase/src/corelib/kernel/qeventdispatcher_win.cpp
+@@ -1,6 +1,7 @@
+ // Copyright (C) 2016 The Qt Company Ltd.
+ // Copyright (C) 2016 Intel Corporation.
+ // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
++// Qt-Security score:significant reason:default
+ 
+ #include "qeventdispatcher_win_p.h"
+ 
+@@ -349,10 +350,10 @@ void QEventDispatcherWin32Private::registerTimer(WinTimerInfo *t)
+ 
+     bool ok = false;
+     ULONG tolerance = calculateNextTimeout(t, qt_msectime());
+-    uint interval = q26::saturate_cast<uint>(t->interval);
++    uint interval = q26::saturating_cast<uint>(t->interval);
+     if (interval != t->interval) {
+         // Now we'll need to post the timer event at each second timeout.
+-        interval = q26::saturate_cast<uint>(t->interval / 2 + 1);
++        interval = q26::saturating_cast<uint>(t->interval / 2 + 1);
+         t->usesExtendedInterval = true;
+         t->isSecondTimeout = false;
+     }
+@@ -368,13 +369,14 @@ void QEventDispatcherWin32Private::registerTimer(WinTimerInfo *t)
+         ok = t->fastTimerId;
+     }
+ 
+-    typedef BOOL (WINAPI *SetCoalescableTimerFunc) (HWND, UINT_PTR, UINT, TIMERPROC, ULONG);
+-    static SetCoalescableTimerFunc mySetCoalescableTimerFunc = 
+-        (SetCoalescableTimerFunc)::GetProcAddress(::GetModuleHandle(L"User32"), "SetCoalescableTimer");
+-
+-    if (!ok && mySetCoalescableTimerFunc) {
++    if (!ok) {
+         // user normal timers for (Very)CoarseTimers, or if no more multimedia timers available
+-        ok = mySetCoalescableTimerFunc(internalHwnd, t->timerId, interval, nullptr, tolerance);
++        // SetCoalescableTimer needs Windows 8, resolve it dynamically and skip on Windows 7.
++        typedef BOOL (WINAPI *SetCoalescableTimerFunc)(HWND, UINT_PTR, UINT, TIMERPROC, ULONG);
++        static const SetCoalescableTimerFunc mySetCoalescableTimerFunc = (SetCoalescableTimerFunc)
++            ::GetProcAddress(::GetModuleHandle(L"User32"), "SetCoalescableTimer");
++        if (mySetCoalescableTimerFunc)
++            ok = mySetCoalescableTimerFunc(internalHwnd, t->timerId, interval, nullptr, tolerance);
+     }
+ 
+     if (!ok)
+diff --git a/qtbase/src/corelib/kernel/qfunctions_win.cpp b/qtbase/src/corelib/kernel/qfunctions_win.cpp
+index 3c5b32ce..3d486173 100644
+--- a/qtbase/src/corelib/kernel/qfunctions_win.cpp
++++ b/qtbase/src/corelib/kernel/qfunctions_win.cpp
+@@ -1,5 +1,6 @@
+ // Copyright (C) 2022 The Qt Company Ltd.
+ // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
++// Qt-Security score:significant reason:default
+ 
+ #include "qfunctions_win_p.h"
+ 
+diff --git a/qtbase/src/corelib/text/qlocale_win.cpp b/qtbase/src/corelib/text/qlocale_win.cpp
+index a358dd76..d71772f7 100644
+--- a/qtbase/src/corelib/text/qlocale_win.cpp
++++ b/qtbase/src/corelib/text/qlocale_win.cpp
+@@ -100,7 +100,7 @@ static QVariant nullIfEmpty(T &&value)
+     // For use where we should fall back to CLDR if we got an empty value.
+     if (value.isEmpty())
+         return {};
+-    return std::move(value);
++    return std::forward<T>(value);
+ }
+ }
+ 
+@@ -338,8 +338,7 @@ QVariant QSystemLocalePrivate::groupingSizes()
+         int dataSize = getLocaleInfo(LOCALE_SGROUPING, grouping, int(std::size(grouping)));
+         if (dataSize) {
+             // MS does not seem to include {first} so it will always be NAN.
+-            QString sysGroupingStr = QString::fromWCharArray(grouping, dataSize);
+-            auto tokenized = sysGroupingStr.tokenize(u";");
++            auto tokenized = QStringView{grouping, dataSize}.tokenize(u';');
+             int width[2] = {0, 0};
+             int index = 0;
+             for (const auto tok : tokenized) {
+diff --git a/qtbase/src/corelib/text/qstringconverter.cpp b/qtbase/src/corelib/text/qstringconverter.cpp
+index 4a38630a..93ae6a12 100644
+--- a/qtbase/src/corelib/text/qstringconverter.cpp
++++ b/qtbase/src/corelib/text/qstringconverter.cpp
+@@ -32,9 +32,8 @@
+ #include <QtCore/private/wcharhelpers_win_p.h>
+ 
+ #include <QtCore/q20iterator.h>
+-#include <QtCore/q26numeric.h>
+ #endif // !QT_BOOTSTRAPPED
+-#endif
++#endif // Q_OS_WIN
+ 
+ #include <array>
+ #if __has_include(<bit>) && __cplusplus > 201703L
+@@ -42,6 +41,9 @@
+ #endif
+ #include <string>
+ #include <QtCore/q20utility.h>
++#ifndef QT_BOOTSTRAPPED
++#include <QtCore/q26numeric.h>
++#endif // !QT_BOOTSTRAPPED
+ 
+ QT_BEGIN_NAMESPACE
+ 
+@@ -1376,6 +1378,18 @@ QChar *QUtf32::convertToUnicode(QChar *out, QByteArrayView in, QStringConverter:
+     qsizetype num = state->remainingChars;
+     state->remainingChars = 0;
+ 
++    const auto writeCodeToOutput = [&](char32_t code) {
++        if (Q_UNLIKELY(code > QChar::LastValidCodePoint)) {
++            if (state->flags & QStringDecoder::Flag::ConvertInvalidToNull)
++                *out++ = QChar::Null;
++            else
++                *out++ = QChar::ReplacementCharacter;
++        } else {
++            for (char16_t c : QChar::fromUcs4(code))
++                *out++ = c;
++        }
++    };
++
+     if (!headerdone || endian == DetectEndianness || num) {
+         while (num < 4)
+             tuple[num++] = *chars++;
+@@ -1393,12 +1407,7 @@ QChar *QUtf32::convertToUnicode(QChar *out, QByteArrayView in, QStringConverter:
+         }
+         char32_t code = (endian == BigEndianness) ? qFromBigEndian<char32_t>(tuple) : qFromLittleEndian<char32_t>(tuple);
+         if (headerdone || code != QChar::ByteOrderMark) {
+-            if (QChar::requiresSurrogates(code)) {
+-                *out++ = QChar(QChar::highSurrogate(code));
+-                *out++ = QChar(QChar::lowSurrogate(code));
+-            } else {
+-                *out++ = QChar(code);
+-            }
++            writeCodeToOutput(code);
+         }
+         num = 0;
+     } else if (endian == DetectEndianness) {
+@@ -1411,8 +1420,7 @@ QChar *QUtf32::convertToUnicode(QChar *out, QByteArrayView in, QStringConverter:
+         tuple[num++] = *chars++;
+         if (num == 4) {
+             char32_t code = (endian == BigEndianness) ? qFromBigEndian<char32_t>(tuple) : qFromLittleEndian<char32_t>(tuple);
+-            for (char16_t c : QChar::fromUcs4(code))
+-                *out++ = c;
++            writeCodeToOutput(code);
+             num = 0;
+         }
+     }
+@@ -1547,12 +1555,12 @@ QString QLocal8Bit::convertToUnicode_sys(QByteArrayView in, quint32 codePage,
+ 
+     // Need it in this scope, since we try to decrease our window size if we
+     // encounter an error
+-    int nextIn = q26::saturate_cast<int>(mblen);
++    int nextIn = q26::saturating_cast<int>(mblen);
+     while (mblen > 0) {
+         std::tie(out, outlen) = growOut(1); // Need space for at least one character
+         if (!out)
+             return {};
+-        const int nextOut = q26::saturate_cast<int>(outlen);
++        const int nextOut = q26::saturating_cast<int>(outlen);
+         int len = MultiByteToWideChar(codePage, MB_ERR_INVALID_CHARS, mb, nextIn, out, nextOut);
+         if (len) {
+             mb += nextIn;
+@@ -1612,7 +1620,7 @@ QString QLocal8Bit::convertToUnicode_sys(QByteArrayView in, quint32 codePage,
+                 break;
+             }
+         }
+-        nextIn = q26::saturate_cast<int>(mblen);
++        nextIn = q26::saturating_cast<int>(mblen);
+     }
+ 
+     if (sp.isEmpty()) {
+@@ -1734,7 +1742,7 @@ QByteArray QLocal8Bit::convertFromUnicode_sys(QStringView in, quint32 codePage,
+     };
+ 
+     const auto getNextWindowSize = [&]() {
+-        int nextIn = q26::saturate_cast<int>(uclen);
++        int nextIn = q26::saturating_cast<int>(uclen);
+         // The Windows API has some issues if the current window ends in the
+         // middle of a surrogate pair, so we avoid that:
+         if (nextIn > 1 && QChar::isHighSurrogate(ch[nextIn - 1]))
+@@ -1748,7 +1756,7 @@ QByteArray QLocal8Bit::convertFromUnicode_sys(QStringView in, quint32 codePage,
+         std::tie(out, outlen) = growOut(1); // We need at least one byte
+         if (!out)
+             return {};
+-        const int nextOut = q26::saturate_cast<int>(outlen);
++        const int nextOut = q26::saturating_cast<int>(outlen);
+         len = WideCharToMultiByte(codePage, 0, ch, nextIn, out, nextOut, nullptr, nullptr);
+         if (len > 0) {
+             ch += nextIn;
+@@ -2483,6 +2491,27 @@ std::optional<QStringConverter::Encoding> QStringConverter::encodingForName(QAny
+ }
+ 
+ #ifndef QT_BOOTSTRAPPED
++namespace QtPrivate {
++// Note: Check isValid() on the QStringConverter before calling this with its
++// state!
++static int partiallyParsedDataCount(QStringConverter::State *state)
++{
++#if QT_CONFIG(icu)
++    if (state->flags & QStringConverter::Flag::UsesIcu) {
++        UConverter *converter = static_cast<UConverter *>(state->d[0]);
++        if (!converter)
++            return 0;
++        UErrorCode err = U_ZERO_ERROR;
++        auto leftOver = ucnv_fromUCountPending(converter, &err);
++        // If there is an error, leftOver is -1, so no need for an additional
++        // check.
++        return std::max(leftOver, 0);
++    }
++#endif
++    return q26::saturating_cast<int>(state->remainingChars);
++}
++} // namespace QtPrivate
++
+ /*!
+    Returns the encoding for the content of \a data if it can be determined.
+    \a expectedFirstCharacter can be passed as an additional hint to help determine
+@@ -2650,6 +2679,201 @@ QStringList QStringConverter::availableCodecs()
+     return result;
+ }
+ 
++/*!
++    \class QStringConverter::FinalizeResultChar
++    \inmodule QtCore
++    \since 6.11
++    \reentrant
++    \brief Holds the result of calling finalize() on QStringDecoder or
++    QStringEncoder.
++
++    This class is used to relay the result of the finalize() call or the reason
++    why the call did not succeed.
++*/
++/*!
++    \enum QStringConverter::FinalizeResultError
++    \value NoError No error.
++    \value InvalidCharacters The encoder successfully finalized, but encountered
++                             invalid characters either during finalization or some time earlier.
++    \value NotEnoughSpace finalize() did \e{not} succeed, you must grow the
++                          buffer and call finalize() again.
++*/
++
++/*!
++    \variable QStringConverter::FinalizeResultChar::error
++    Relays errors discovered during finalization.
++*/
++/*!
++    \variable QStringConverter::FinalizeResultChar::next
++    Points to the character position \e{following} the last-written character.
++*/
++/*!
++    \variable QStringConverter::FinalizeResultChar::invalidChars
++    The number of invalid characters that were previously counted in the state
++    as well as any that were encountered during the call to finalize().
++*/
++
++/*!
++    \typedef QStringDecoder::FinalizeResult
++
++    This is an alias for QStringConverter::FinalizeResultChar<char16_t>.
++*/
++
++/*!
++    \typedef QStringDecoder::FinalizeResultQChar
++
++    This is an alias for QStringConverter::FinalizeResultChar<QChar>.
++*/
++
++/*!
++    \fn QStringDecoder::FinalizeResultQChar QStringDecoder::finalize(QChar *out, qsizetype maxlen)
++    \fn QStringDecoder::FinalizeResult QStringDecoder::finalize(char16_t *out, qsizetype maxlen)
++    \fn QStringDecoder::FinalizeResult QStringDecoder::finalize()
++
++    Signals to the decoder that no further data will arrive.
++
++    May also provide data from residual content that was pending decoding.
++    When there is no residual data to account for, the return's \c error
++    field will be set to \l {QStringConverter::FinalizeResultChar::error}
++    {NoError}.
++
++    If \a out is supplied and non-null, it must have space in which up to
++    \a maxlen characters may be written. Up to this many characters of
++    residual output are written to this space, with the end indicated by
++    the return-value's \c next field. Typically this residual data shall
++    consist of one replacement character per remaining unconverted input
++    character.
++
++    If all residual content has been delivered via \a out, if \a out is
++    \nullptr, or if there is no residual data, the decoder is reset on
++    return from finalize(). Otherwise, the remaining data can be retrieved
++    or discarded by a further call to finalize().
++
++    \since 6.11
++    \sa hasError(), appendToBuffer()
++ */
++auto QStringDecoder::finalize(char16_t *out, qsizetype maxlen) -> FinalizeResult
++{
++    int count = 0;
++    if (isValid())
++        count = QtPrivate::partiallyParsedDataCount(&state);
++    using Error = FinalizeResult::Error;
++    const qint16 invalidChars = q26::saturating_cast<qint16>(state.invalidChars + count);
++    if (count == 0 || !out) {
++        resetState();
++        return {out, invalidChars, invalidChars ? Error::InvalidCharacters : Error::NoError};
++    }
++    if (maxlen < count)
++        return {out, invalidChars, Error::NotEnoughSpace};
++
++    const char16_t replacement = (state.flags & QStringConverter::Flag::ConvertInvalidToNull)
++            ? QChar::Null
++            : QChar::ReplacementCharacter;
++    out = std::fill_n(out, count, replacement);
++    resetState();
++    return {out, invalidChars, invalidChars ? Error::InvalidCharacters : Error::NoError};
++}
++
++/*!
++    \typedef QStringEncoder::FinalizeResult
++
++    This is an alias for QStringConverter::FinalizeResultChar<char>.
++*/
++
++/*!
++    \fn QStringEncoder::FinalizeResult QStringEncoder::finalize(char *out, qsizetype maxlen)
++    \fn QStringEncoder::FinalizeResult QStringEncoder::finalize()
++
++    Signals to the decoder that no further data will arrive.
++
++    May also provide data from residual content that was pending decoding.
++    When there is no residual data to account for, the return's \c error
++    field will be set to \l {QStringConverter::FinalizeResultChar::error}
++    {NoError}.
++
++    If \a out is supplied and non-null, it must have space in which up to
++    \a maxlen characters may be written. Up to this many characters of
++    residual output are written to this space, with the end indicated by
++    the return-value's \c next field. Typically this residual data shall
++    consist of one replacement character per remaining unconverted input
++    character. When using a stateful encoding, such as ISO-2022-JP, this may
++    also write bytes to restore, or end, the current state in the character
++    stream.
++
++    If all residual content has been delivered via \a out, if \a out is
++    \nullptr, or if there is no residual data, the decoder is reset on
++    return from finalize(). Otherwise, the remaining data can be retrieved
++    or discarded by a further call to finalize().
++
++    \since 6.11
++    \sa hasError(), appendToBuffer()
++ */
++auto QStringEncoder::finalize(char *out, qsizetype maxlen) -> QStringEncoder::FinalizeResult
++{
++    qsizetype count = 0;
++    if (isValid())
++        count = QtPrivate::partiallyParsedDataCount(&state);
++    // For ICU we may be using a stateful codec that need to restore or finalize
++    // some state, otherwise we have nothing to do with count == 0
++    using Error = FinalizeResult::Error;
++    const bool usesIcu = !!(state.flags & QStringConverter::Flag::UsesIcu) && !!state.d[0];
++    const qint16 invalidChars = q26::saturating_cast<qint16>(state.invalidChars + count);
++    if (!isValid() || (!count && !usesIcu) || !out) {
++        resetState();
++        return {out, invalidChars, invalidChars ? Error::InvalidCharacters : Error::NoError};
++    }
++
++    if ((false)) {
++#if defined(QT_USE_ICU_CODECS)
++    } else if (usesIcu) {
++        Q_ASSERT(out);
++        auto *icu_conv = static_cast<UConverter *>(state.d[0]);
++        Q_ASSERT(icu_conv); // bool usesIcu checks that the pointer is non-null
++        UErrorCode err = U_ZERO_ERROR;
++
++        UBool flush = true;
++
++        // If the QStringConverter was moved, the state that we used as a context is stale now.
++        UConverterFromUCallback action;
++        const void *context;
++        ucnv_getFromUCallBack(icu_conv, &action, &context);
++        if (context != &state)
++            ucnv_setFromUCallBack(icu_conv, action, &state, nullptr, nullptr, &err);
++        const UChar *dummyInput = u"";
++        const char *outEnd = out + maxlen;
++        ucnv_fromUnicode(icu_conv, &out, outEnd, &dummyInput, dummyInput, nullptr, flush, &err);
++        if (err == U_BUFFER_OVERFLOW_ERROR)
++            return {out, invalidChars, Error::NotEnoughSpace};
++        resetState();
++#endif
++    } else if (!(state.flags & QStringConverter::Flag::ConvertInvalidToNull)) {
++        /*
++            We don't really know (in general) how the replacement character
++            looks like in the target encoding. So we just encode 0xfffd, which
++            is the Unicode replacement character.
++            Use 4 as a best-guess for the upper-bound of how many characters
++            would potentially be produced by the leftover UTF-16 characters in
++            the state
++        */
++        constexpr QChar replacementCharacter = QChar::ReplacementCharacter;
++        constexpr char16_t repl = replacementCharacter.unicode();
++        constexpr std::array<char16_t, 4> replacement{ repl, repl, repl, repl };
++        const qsizetype charactersToEncode = std::min(count, qsizetype(replacement.size()));
++        if (maxlen < requiredSpace(charactersToEncode))
++            return {out, invalidChars, Error::NotEnoughSpace};
++        // we don't want the incomplete data in the internal buffer; we're
++        // flushing the buffer after all
++        resetState();
++        out = appendToBuffer(out, QStringView(replacement.data(), charactersToEncode));
++    } else /* outputting Null characters for each remaining unconverted input character */ {
++        if (maxlen < count)
++            return {out, invalidChars, Error::NotEnoughSpace};
++        out = std::fill_n(out, count, '\0');
++        resetState();
++    }
++    return {out, invalidChars, invalidChars ? Error::InvalidCharacters : Error::NoError};
++}
++
+ /*!
+     Tries to determine the encoding of the HTML in \a data by looking at leading byte
+     order marks or a charset specifier in the HTML meta tag and returns a QStringDecoder
+@@ -2781,7 +3005,8 @@ const char *QStringConverter::nameForEncoding(QStringConverter::Encoding e) noex
+ 
+     \note \a out must be large enough to be able to hold all the decoded data. Use
+     requiredSpace() to determine the maximum size requirement to be able to encode
+-    \a in.
++    \a in. This function may write to any bytes between \a out and \c{out +
++    requiredSpace()}, including those past the returned end pointer.
+ 
+     \sa requiredSpace()
+ */
+@@ -2877,7 +3102,9 @@ const char *QStringConverter::nameForEncoding(QStringConverter::Encoding e) noex
+ 
+     \a out needs to be large enough to be able to hold all the decoded data. Use
+     \l{requiredSpace} to determine the maximum size requirements to decode an encoded
+-    data buffer of \c in.size() bytes.
++    data buffer of \c in.size() bytes. This function may write to any bytes
++    between \a out and \c{out + requiredSpace()}, including those past the
++    returned end pointer.
+ 
+     \sa requiredSpace
+ */
+diff --git a/qtbase/src/corelib/thread/qmutex.h b/qtbase/src/corelib/thread/qmutex.h
+index f7ad4d44..80fbec32 100644
+--- a/qtbase/src/corelib/thread/qmutex.h
++++ b/qtbase/src/corelib/thread/qmutex.h
+@@ -55,7 +55,7 @@ public:
+ 
+         if constexpr (FutexAlwaysAvailable) {
+             // we always unlock if we have futexes
+-            if (QMutexPrivate *d = d_ptr.fetchAndStoreRelease(nullptr); d != dummyLocked())
++            if (QMutexPrivate *d = d_ptr.fetchAndStoreRelease(nullptr); Q_UNLIKELY(d != dummyLocked()))
+                 unlockInternalFutex(d);     // was contended
+         } else {
+             // if we don't have futexes, we can only unlock if not contended
+@@ -85,7 +85,7 @@ public:
+ private:
+     inline bool fastTryLock() noexcept
+     {
+-        if (d_ptr.loadRelaxed() != nullptr)
++        if (Q_UNLIKELY(d_ptr.loadRelaxed() != nullptr))
+             return false;
+         return d_ptr.testAndSetAcquire(nullptr, dummyLocked());
+     }
+diff --git a/qtbase/src/corelib/thread/qthread_win.cpp b/qtbase/src/corelib/thread/qthread_win.cpp
+index 48d2a546..7d90a9f5 100644
+--- a/qtbase/src/corelib/thread/qthread_win.cpp
++++ b/qtbase/src/corelib/thread/qthread_win.cpp
+@@ -10,7 +10,6 @@
+ #include <private/qeventdispatcher_win_p.h>
+ #include "qloggingcategory.h"
+ #include "qmutex.h"
+-#include "qthreadstorage.h"
+ 
+ #include <qt_windows.h>
+ 
+@@ -50,6 +49,7 @@ Q_STATIC_LOGGING_CATEGORY(lcQThread, "qt.core.thread", QtWarningMsg)
+ 
+ Q_CONSTINIT static thread_local QThreadData *currentThreadData = nullptr;
+ 
++static void deref_current_thread_data(QThreadData *data);
+ static void destroy_current_thread_data(void *p)
+ {
+     QThreadData *data = static_cast<QThreadData *>(p);
+@@ -66,6 +66,12 @@ static void destroy_current_thread_data(void *p)
+         // have begun destruction; we must not dereference the QThread pointer.
+     }
+ 
++    deref_current_thread_data(data);
++}
++
++// static
++void deref_current_thread_data(QThreadData *data)
++{
+     // the QThread object may still have a reference, so this may not delete
+     data->deref();
+ 
+@@ -107,19 +113,20 @@ QThreadData *QThreadData::currentThreadData() noexcept
+ QThreadData *QThreadData::createCurrentThreadData()
+ {
+     Q_ASSERT(!currentThreadData());
+-    std::unique_ptr data = std::make_unique<QThreadData>();
++
++    QThreadData *data = new QThreadData();
+ 
+     // This needs to be called prior to new QAdoptedThread() to avoid
+     // recursion (see qobject.cpp).
+-    set_thread_data(data.get());
++    set_thread_data(data);
+ 
+     QT_TRY {
+-        data->thread.storeRelease(new QAdoptedThread(data.get()));
++        data->thread.storeRelease(new QAdoptedThread(data));
+     } QT_CATCH(...) {
+-        clearCurrentThreadData();
++        deref_current_thread_data(data);
+         QT_RETHROW;
+     }
+-    return data.release();
++    return data;
+ }
+ 
+ void QAdoptedThread::init()
+@@ -201,13 +208,14 @@ unsigned int __stdcall QT_ENSURE_STACK_ALIGNED_FOR_SSE QThreadPrivate::start(voi
+ {
+     QThread *thr = reinterpret_cast<QThread *>(arg);
+     QThreadData *data = QThreadData::get2(thr);
+-    // If a QThread is restarted, reuse the QBindingStatus, too
+-    data->reuseBindingStatusForNewNativeThread();
+ 
+     data->ref();
+     set_thread_data(data);
+     data->threadId.storeRelaxed(QThread::currentThreadId());
+ 
++    // If a QThread is restarted, reuse the QBindingStatus, too
++    data->reuseBindingStatusForNewNativeThread();
++
+     QThread::setTerminationEnabled(false);
+ 
+     {
+diff --git a/qtbase/src/gui/rhi/qdxgivsyncservice.cpp b/qtbase/src/gui/rhi/qdxgivsyncservice.cpp
+index 7db58acf..287e50ea 100644
+--- a/qtbase/src/gui/rhi/qdxgivsyncservice.cpp
++++ b/qtbase/src/gui/rhi/qdxgivsyncservice.cpp
+@@ -384,6 +384,12 @@ void QDxgiVSyncService::registerWindow(QWindow *window)
+     if (disableService || windows.contains(window))
+         return;
+ 
++    if (window->format().swapInterval() == 0) {
++        qCDebug(lcQpaScreenUpdates) << "QDxgiVSyncService: window" << window
++                                    << "has swapInterval 0, skipping this window";
++        return;
++    }
++
+     qCDebug(lcQpaScreenUpdates) << "QDxgiVSyncService: adding window" << window;
+ 
+     WindowData wd;
+diff --git a/qtbase/src/gui/rhi/qrhid3d11.cpp b/qtbase/src/gui/rhi/qrhid3d11.cpp
+index 84535960..b78e6f8c 100644
+--- a/qtbase/src/gui/rhi/qrhid3d11.cpp
++++ b/qtbase/src/gui/rhi/qrhid3d11.cpp
+@@ -730,6 +730,10 @@ bool QRhiD3D11::isFeatureSupported(QRhi::Feature feature) const
+     case QRhi::PerRenderTargetBlending:
+     case QRhi::SampleVariables:
+         return true;
++    case QRhi::InstanceIndexIncludesBaseInstance:
++        return false;
++    case QRhi::DepthClamp:
++        return true;
+     default:
+         Q_UNREACHABLE();
+         return false;
+@@ -1064,6 +1068,15 @@ void QRhiD3D11::setShaderResources(QRhiCommandBuffer *cb, QRhiShaderResourceBind
+ 
+     QD3D11ShaderResourceBindings *srbD = QRHI_RES(QD3D11ShaderResourceBindings, srb);
+ 
++    bool pipelineChanged = false;
++    if (gfxPsD) {
++        pipelineChanged = srbD->lastUsedGraphicsPipeline != gfxPsD;
++        srbD->lastUsedGraphicsPipeline = gfxPsD;
++    } else {
++        pipelineChanged = srbD->lastUsedComputePipeline != compPsD;
++        srbD->lastUsedComputePipeline = compPsD;
++    }
++
+     bool srbUpdate = false;
+     for (int i = 0, ie = srbD->sortedBindings.count(); i != ie; ++i) {
+         const QRhiShaderResourceBinding::Data *b = shaderResourceBindingData(srbD->sortedBindings.at(i));
+@@ -1074,6 +1087,7 @@ void QRhiD3D11::setShaderResources(QRhiCommandBuffer *cb, QRhiShaderResourceBind
+             QD3D11Buffer *bufD = QRHI_RES(QD3D11Buffer, b->u.ubuf.buf);
+             // NonDynamicUniformBuffers is not supported by this backend
+             Q_ASSERT(bufD->m_type == QRhiBuffer::Dynamic && bufD->m_usage.testFlag(QRhiBuffer::UniformBuffer));
++            sanityCheckResourceOwnership(bufD);
+ 
+             executeBufferHostWrites(bufD);
+ 
+@@ -1100,6 +1114,8 @@ void QRhiD3D11::setShaderResources(QRhiCommandBuffer *cb, QRhiShaderResourceBind
+                 // images and samplers, so tex or sampler (but not both) can be
+                 // null here.
+                 Q_ASSERT(texD || samplerD);
++                sanityCheckResourceOwnership(texD);
++                sanityCheckResourceOwnership(samplerD);
+                 const quint64 texId = texD ? texD->m_id : 0;
+                 const uint texGen = texD ? texD->generation : 0;
+                 const quint64 samplerId = samplerD ? samplerD->m_id : 0;
+@@ -1123,6 +1139,7 @@ void QRhiD3D11::setShaderResources(QRhiCommandBuffer *cb, QRhiShaderResourceBind
+         case QRhiShaderResourceBinding::ImageLoadStore:
+         {
+             QD3D11Texture *texD = QRHI_RES(QD3D11Texture, b->u.simage.tex);
++            sanityCheckResourceOwnership(texD);
+             if (texD->generation != bd.simage.generation || texD->m_id != bd.simage.id) {
+                 srbUpdate = true;
+                 bd.simage.id = texD->m_id;
+@@ -1135,6 +1152,7 @@ void QRhiD3D11::setShaderResources(QRhiCommandBuffer *cb, QRhiShaderResourceBind
+         case QRhiShaderResourceBinding::BufferLoadStore:
+         {
+             QD3D11Buffer *bufD = QRHI_RES(QD3D11Buffer, b->u.sbuf.buf);
++            sanityCheckResourceOwnership(bufD);
+             if (bufD->generation != bd.sbuf.generation || bufD->m_id != bd.sbuf.id) {
+                 srbUpdate = true;
+                 bd.sbuf.id = bufD->m_id;
+@@ -1148,7 +1166,7 @@ void QRhiD3D11::setShaderResources(QRhiCommandBuffer *cb, QRhiShaderResourceBind
+         }
+     }
+ 
+-    if (srbUpdate) {
++    if (srbUpdate || pipelineChanged) {
+         const QShader::NativeResourceBindingMap *resBindMaps[RBM_SUPPORTED_STAGES];
+         memset(resBindMaps, 0, sizeof(resBindMaps));
+         if (gfxPsD) {
+@@ -1166,7 +1184,7 @@ void QRhiD3D11::setShaderResources(QRhiCommandBuffer *cb, QRhiShaderResourceBind
+     const bool srbChanged = gfxPsD ? (cbD->currentGraphicsSrb != srb) : (cbD->currentComputeSrb != srb);
+     const bool srbRebuilt = cbD->currentSrbGeneration != srbD->generation;
+ 
+-    if (srbChanged || srbRebuilt || srbUpdate || srbD->hasDynamicOffset) {
++    if (pipelineChanged || srbChanged || srbRebuilt || srbUpdate || srbD->hasDynamicOffset) {
+         if (gfxPsD) {
+             cbD->currentGraphicsSrb = srb;
+             cbD->currentComputeSrb = nullptr;
+@@ -1178,7 +1196,7 @@ void QRhiD3D11::setShaderResources(QRhiCommandBuffer *cb, QRhiShaderResourceBind
+ 
+         QD3D11CommandBuffer::Command &cmd(cbD->commands.get());
+         cmd.cmd = QD3D11CommandBuffer::Command::BindShaderResources;
+-        cmd.args.bindShaderResources.srb = srbD;
++        cmd.args.bindShaderResources.resourceBatchesIndex = cbD->retainResourceBatches(srbD->resourceBatches);
+         // dynamic offsets have to be applied at the time of executing the bind
+         // operations, not here
+         cmd.args.bindShaderResources.offsetOnlyChange = !srbChanged && !srbRebuilt && !srbUpdate && srbD->hasDynamicOffset;
+@@ -1838,6 +1856,7 @@ void QRhiD3D11::enqueueSubresUpload(QD3D11Texture *texD, QD3D11CommandBuffer *cb
+             const QPoint sp = subresDesc.sourceTopLeft();
+             if (!subresDesc.sourceSize().isEmpty())
+                 size = subresDesc.sourceSize();
++            size = clampedSubResourceUploadSize(size, dp, level, texD->m_pixelSize);
+             if (img.depth() == 32) {
+                 const int offset = sp.y() * img.bytesPerLine() + sp.x() * 4;
+                 cmd.args.updateSubRes.src = cbD->retainImage(img) + offset;
+@@ -1847,6 +1866,7 @@ void QRhiD3D11::enqueueSubresUpload(QD3D11Texture *texD, QD3D11CommandBuffer *cb
+                 cmd.args.updateSubRes.src = cbD->retainImage(img);
+             }
+         } else {
++            size = clampedSubResourceUploadSize(size, dp, level, texD->m_pixelSize);
+             cmd.args.updateSubRes.src = cbD->retainImage(img);
+         }
+         box.left = UINT(dp.x());
+@@ -2395,22 +2415,7 @@ static inline std::pair<int, int> mapBinding(int binding,
+ void QRhiD3D11::updateShaderResourceBindings(QD3D11ShaderResourceBindings *srbD,
+                                              const QShader::NativeResourceBindingMap *nativeResourceBindingMaps[])
+ {
+-    srbD->vsUniformBufferBatches.clear();
+-    srbD->hsUniformBufferBatches.clear();
+-    srbD->dsUniformBufferBatches.clear();
+-    srbD->gsUniformBufferBatches.clear();
+-    srbD->fsUniformBufferBatches.clear();
+-    srbD->csUniformBufferBatches.clear();
+-
+-    srbD->vsSamplerBatches.clear();
+-    srbD->hsSamplerBatches.clear();
+-    srbD->dsSamplerBatches.clear();
+-    srbD->gsSamplerBatches.clear();
+-    srbD->fsSamplerBatches.clear();
+-    srbD->csSamplerBatches.clear();
+-
+-    srbD->csUavBatches.clear();
+-    srbD->fsUavBatches.clear();
++    srbD->resourceBatches.clear();
+ 
+     struct Stage {
+         struct Buffer {
+@@ -2662,22 +2667,22 @@ void QRhiD3D11::updateShaderResourceBindings(QD3D11ShaderResourceBindings *srbD,
+         });
+     }
+ 
+-    res[RBM_VERTEX].buildBufferBatches(srbD->vsUniformBufferBatches);
+-    res[RBM_HULL].buildBufferBatches(srbD->hsUniformBufferBatches);
+-    res[RBM_DOMAIN].buildBufferBatches(srbD->dsUniformBufferBatches);
+-    res[RBM_GEOMETRY].buildBufferBatches(srbD->gsUniformBufferBatches);
+-    res[RBM_FRAGMENT].buildBufferBatches(srbD->fsUniformBufferBatches);
+-    res[RBM_COMPUTE].buildBufferBatches(srbD->csUniformBufferBatches);
++    res[RBM_VERTEX].buildBufferBatches(srbD->resourceBatches.vsUniformBufferBatches);
++    res[RBM_HULL].buildBufferBatches(srbD->resourceBatches.hsUniformBufferBatches);
++    res[RBM_DOMAIN].buildBufferBatches(srbD->resourceBatches.dsUniformBufferBatches);
++    res[RBM_GEOMETRY].buildBufferBatches(srbD->resourceBatches.gsUniformBufferBatches);
++    res[RBM_FRAGMENT].buildBufferBatches(srbD->resourceBatches.fsUniformBufferBatches);
++    res[RBM_COMPUTE].buildBufferBatches(srbD->resourceBatches.csUniformBufferBatches);
+ 
+-    res[RBM_VERTEX].buildSamplerBatches(srbD->vsSamplerBatches);
+-    res[RBM_HULL].buildSamplerBatches(srbD->hsSamplerBatches);
+-    res[RBM_DOMAIN].buildSamplerBatches(srbD->dsSamplerBatches);
+-    res[RBM_GEOMETRY].buildSamplerBatches(srbD->gsSamplerBatches);
+-    res[RBM_FRAGMENT].buildSamplerBatches(srbD->fsSamplerBatches);
+-    res[RBM_COMPUTE].buildSamplerBatches(srbD->csSamplerBatches);
++    res[RBM_VERTEX].buildSamplerBatches(srbD->resourceBatches.vsSamplerBatches);
++    res[RBM_HULL].buildSamplerBatches(srbD->resourceBatches.hsSamplerBatches);
++    res[RBM_DOMAIN].buildSamplerBatches(srbD->resourceBatches.dsSamplerBatches);
++    res[RBM_GEOMETRY].buildSamplerBatches(srbD->resourceBatches.gsSamplerBatches);
++    res[RBM_FRAGMENT].buildSamplerBatches(srbD->resourceBatches.fsSamplerBatches);
++    res[RBM_COMPUTE].buildSamplerBatches(srbD->resourceBatches.csSamplerBatches);
+ 
+-    res[RBM_FRAGMENT].buildUavBatches(srbD->fsUavBatches);
+-    res[RBM_COMPUTE].buildUavBatches(srbD->csUavBatches);
++    res[RBM_FRAGMENT].buildUavBatches(srbD->resourceBatches.fsUavBatches);
++    res[RBM_COMPUTE].buildUavBatches(srbD->resourceBatches.csUavBatches);
+ }
+ 
+ void QRhiD3D11::executeBufferHostWrites(QD3D11Buffer *bufD)
+@@ -2733,8 +2738,8 @@ static inline uint clampedResourceCount(uint startSlot, int countSlots, uint max
+ }
+ 
+ #define SETUBUFBATCH(stagePrefixL, stagePrefixU) \
+-    if (srbD->stagePrefixL##UniformBufferBatches.present) { \
+-        const QD3D11ShaderResourceBindings::StageUniformBufferBatches &batches(srbD->stagePrefixL##UniformBufferBatches); \
++    if (allResourceBatches.stagePrefixL##UniformBufferBatches.present) { \
++        const QD3D11ShaderResourceBindings::StageUniformBufferBatches &batches(allResourceBatches.stagePrefixL##UniformBufferBatches); \
+         for (int i = 0, ie = batches.ubufs.batches.count(); i != ie; ++i) { \
+             const uint count = clampedResourceCount(batches.ubufs.batches[i].startBinding, \
+                                                     batches.ubufs.batches[i].resources.count(), \
+@@ -2762,14 +2767,14 @@ static inline uint clampedResourceCount(uint startSlot, int countSlots, uint max
+     }
+ 
+ #define SETSAMPLERBATCH(stagePrefixL, stagePrefixU) \
+-    if (srbD->stagePrefixL##SamplerBatches.present) { \
+-        for (const auto &batch : srbD->stagePrefixL##SamplerBatches.samplers.batches) { \
++    if (allResourceBatches.stagePrefixL##SamplerBatches.present) { \
++        for (const auto &batch : allResourceBatches.stagePrefixL##SamplerBatches.samplers.batches) { \
+             const uint count = clampedResourceCount(batch.startBinding, batch.resources.count(), \
+                                                     D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT, #stagePrefixU " sampler"); \
+             if (count) \
+                 context->stagePrefixU##SetSamplers(batch.startBinding, count, batch.resources.constData()); \
+         } \
+-        for (const auto &batch : srbD->stagePrefixL##SamplerBatches.shaderresources.batches) { \
++        for (const auto &batch : allResourceBatches.stagePrefixL##SamplerBatches.shaderresources.batches) { \
+             const uint count = clampedResourceCount(batch.startBinding, batch.resources.count(), \
+                                                     D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT, #stagePrefixU " SRV"); \
+             if (count) { \
+@@ -2781,8 +2786,8 @@ static inline uint clampedResourceCount(uint startSlot, int countSlots, uint max
+     }
+ 
+ #define SETUAVBATCH(stagePrefixL, stagePrefixU) \
+-    if (srbD->stagePrefixL##UavBatches.present) { \
+-        for (const auto &batch : srbD->stagePrefixL##UavBatches.uavs.batches) { \
++    if (allResourceBatches.stagePrefixL##UavBatches.present) { \
++        for (const auto &batch : allResourceBatches.stagePrefixL##UavBatches.uavs.batches) { \
+             const uint count = clampedResourceCount(batch.startBinding, batch.resources.count(), \
+                                                     D3D11_1_UAV_SLOT_COUNT, #stagePrefixU " UAV"); \
+             if (count) { \
+@@ -2796,7 +2801,7 @@ static inline uint clampedResourceCount(uint startSlot, int countSlots, uint max
+         } \
+     }
+ 
+-void QRhiD3D11::bindShaderResources(QD3D11ShaderResourceBindings *srbD,
++void QRhiD3D11::bindShaderResources(const QD3D11ShaderResourceBindings::ResourceBatches &allResourceBatches,
+                                     const uint *dynOfsPairs, int dynOfsPairCount,
+                                     bool offsetOnlyChange,
+                                     QD3D11RenderTargetData *rtD,
+@@ -2821,8 +2826,8 @@ void QRhiD3D11::bindShaderResources(QD3D11ShaderResourceBindings *srbD,
+ 
+         SETUAVBATCH(cs, CS)
+ 
+-        if (srbD->fsUavBatches.present) {
+-            for (const auto &batch : srbD->fsUavBatches.uavs.batches) {
++        if (allResourceBatches.fsUavBatches.present) {
++            for (const auto &batch : allResourceBatches.fsUavBatches.uavs.batches) {
+                 const uint count = qMin(clampedResourceCount(batch.startBinding, batch.resources.count(),
+                                                         D3D11_1_UAV_SLOT_COUNT, "fs UAV"),
+                                         uint(QD3D11RenderTargetData::MAX_COLOR_ATTACHMENTS));
+@@ -3051,7 +3056,7 @@ void QRhiD3D11::executeCommandBuffer(QD3D11CommandBuffer *cbD)
+         }
+             break;
+         case QD3D11CommandBuffer::Command::BindShaderResources:
+-            bindShaderResources(cmd.args.bindShaderResources.srb,
++            bindShaderResources(cbD->resourceBatchRetainPool[cmd.args.bindShaderResources.resourceBatchesIndex],
+                                 cmd.args.bindShaderResources.dynamicOffsetPairs,
+                                 cmd.args.bindShaderResources.dynamicOffsetCount,
+                                 cmd.args.bindShaderResources.offsetOnlyChange,
+@@ -4695,7 +4700,7 @@ bool QD3D11GraphicsPipeline::create()
+     rastDesc.FrontCounterClockwise = m_frontFace == CCW;
+     rastDesc.DepthBias = m_depthBias;
+     rastDesc.SlopeScaledDepthBias = m_slopeScaledDepthBias;
+-    rastDesc.DepthClipEnable = true;
++    rastDesc.DepthClipEnable = m_depthClamp ? FALSE : TRUE;
+     rastDesc.ScissorEnable = m_flags.testFlag(UsesScissor);
+     rastDesc.MultisampleEnable = rhiD->effectiveSampleDesc(m_sampleCount).Count > 1;
+     HRESULT hr = rhiD->dev->CreateRasterizerState(&rastDesc, &rastState);
+@@ -5701,7 +5706,11 @@ bool QD3D11SwapChain::createOrResize()
+                 rhiD->dxgiFactory->MakeWindowAssociation(hwnd, DXGI_MWA_NO_WINDOW_CHANGES);
+             }
+         }
+-        if (FAILED(hr)) {
++        if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) {
++            qWarning("Device loss detected during swapchain creation");
++            rhiD->deviceLost = true;
++            return false;
++        } else if (FAILED(hr)) {
+             qWarning("Failed to create D3D11 swapchain: %s"
+                      " (Width=%u Height=%u Format=%u SampleCount=%u BufferCount=%u Scaling=%u SwapEffect=%u Stereo=%u)",
+                      qPrintable(QSystemError::windowsComString(hr)),
+diff --git a/qtbase/src/gui/rhi/qrhid3d11_p.h b/qtbase/src/gui/rhi/qrhid3d11_p.h
+index e9840757..414146a8 100644
+--- a/qtbase/src/gui/rhi/qrhid3d11_p.h
++++ b/qtbase/src/gui/rhi/qrhid3d11_p.h
+@@ -188,6 +188,9 @@ struct RenderTargetUavUpdateState
+     bool update(QD3D11RenderTargetData *data, ID3D11UnorderedAccessView * const *uavs = nullptr, int count = 0);
+ };
+ 
++struct QD3D11GraphicsPipeline;
++struct QD3D11ComputePipeline;
++
+ struct QD3D11ShaderResourceBindings : public QRhiShaderResourceBindings
+ {
+     QD3D11ShaderResourceBindings(QRhiImplementation *rhi);
+@@ -199,6 +202,8 @@ struct QD3D11ShaderResourceBindings : public QRhiShaderResourceBindings
+     bool hasDynamicOffset = false;
+     QVarLengthArray<QRhiShaderResourceBinding, 8> sortedBindings;
+     uint generation = 0;
++    QD3D11GraphicsPipeline *lastUsedGraphicsPipeline = nullptr;
++    QD3D11ComputePipeline *lastUsedComputePipeline = nullptr;
+ 
+     // Keep track of the generation number of each referenced QRhi* to be able
+     // to detect that the batched bindings are out of date.
+@@ -278,22 +283,43 @@ struct QD3D11ShaderResourceBindings : public QRhiShaderResourceBindings
+         }
+     };
+ 
+-    StageUniformBufferBatches vsUniformBufferBatches;
+-    StageUniformBufferBatches hsUniformBufferBatches;
+-    StageUniformBufferBatches dsUniformBufferBatches;
+-    StageUniformBufferBatches gsUniformBufferBatches;
+-    StageUniformBufferBatches fsUniformBufferBatches;
+-    StageUniformBufferBatches csUniformBufferBatches;
++    struct ResourceBatches {
++        StageUniformBufferBatches vsUniformBufferBatches;
++        StageUniformBufferBatches hsUniformBufferBatches;
++        StageUniformBufferBatches dsUniformBufferBatches;
++        StageUniformBufferBatches gsUniformBufferBatches;
++        StageUniformBufferBatches fsUniformBufferBatches;
++        StageUniformBufferBatches csUniformBufferBatches;
+ 
+-    StageSamplerBatches vsSamplerBatches;
+-    StageSamplerBatches hsSamplerBatches;
+-    StageSamplerBatches dsSamplerBatches;
+-    StageSamplerBatches gsSamplerBatches;
+-    StageSamplerBatches fsSamplerBatches;
+-    StageSamplerBatches csSamplerBatches;
++        StageSamplerBatches vsSamplerBatches;
++        StageSamplerBatches hsSamplerBatches;
++        StageSamplerBatches dsSamplerBatches;
++        StageSamplerBatches gsSamplerBatches;
++        StageSamplerBatches fsSamplerBatches;
++        StageSamplerBatches csSamplerBatches;
+ 
+-    StageUavBatches csUavBatches;
+-    StageUavBatches fsUavBatches;
++        StageUavBatches csUavBatches;
++        StageUavBatches fsUavBatches;
++
++        void clear() {
++            vsUniformBufferBatches.clear();
++            hsUniformBufferBatches.clear();
++            dsUniformBufferBatches.clear();
++            gsUniformBufferBatches.clear();
++            fsUniformBufferBatches.clear();
++            csUniformBufferBatches.clear();
++
++            vsSamplerBatches.clear();
++            hsSamplerBatches.clear();
++            dsSamplerBatches.clear();
++            gsSamplerBatches.clear();
++            fsSamplerBatches.clear();
++            csSamplerBatches.clear();
++
++            csUavBatches.clear();
++            fsUavBatches.clear();
++        }
++    } resourceBatches;
+ 
+     friend class QRhiD3D11;
+ };
+@@ -438,7 +464,7 @@ struct QD3D11CommandBuffer : public QRhiCommandBuffer
+                 QD3D11GraphicsPipeline *ps;
+             } bindGraphicsPipeline;
+             struct {
+-                QD3D11ShaderResourceBindings *srb;
++                int resourceBatchesIndex;
+                 bool offsetOnlyChange;
+                 int dynamicOffsetCount;
+                 uint dynamicOffsetPairs[MAX_DYNAMIC_OFFSET_COUNT * 2]; // binding, offsetInConstants
+@@ -535,6 +561,7 @@ struct QD3D11CommandBuffer : public QRhiCommandBuffer
+     QVarLengthArray<QByteArray, 4> dataRetainPool;
+     QVarLengthArray<QRhiBufferData, 4> bufferDataRetainPool;
+     QVarLengthArray<QImage, 4> imageRetainPool;
++    QVarLengthArray<QD3D11ShaderResourceBindings::ResourceBatches, 4> resourceBatchRetainPool;
+ 
+     // relies heavily on implicit sharing (no copies of the actual data will be made)
+     const uchar *retainData(const QByteArray &data) {
+@@ -549,11 +576,17 @@ struct QD3D11CommandBuffer : public QRhiCommandBuffer
+         imageRetainPool.append(image);
+         return imageRetainPool.last().constBits();
+     }
++    // except this one
++    int retainResourceBatches(const QD3D11ShaderResourceBindings::ResourceBatches &resourceBatches) {
++        resourceBatchRetainPool.append(resourceBatches);
++        return resourceBatchRetainPool.count() - 1;
++    }
+     void resetCommands() {
+         commands.reset();
+         dataRetainPool.clear();
+         bufferDataRetainPool.clear();
+         imageRetainPool.clear();
++        resourceBatchRetainPool.clear();
+     }
+     void resetState() {
+         recordingPass = NoPass;
+@@ -775,7 +808,7 @@ public:
+                                       const QShader::NativeResourceBindingMap *nativeResourceBindingMaps[]);
+     void executeBufferHostWrites(QD3D11Buffer *bufD);
+ 
+-    void bindShaderResources(QD3D11ShaderResourceBindings *srbD,
++    void bindShaderResources(const QD3D11ShaderResourceBindings::ResourceBatches &allResourceBatches,
+                              const uint *dynOfsPairs, int dynOfsPairCount,
+                              bool offsetOnlyChange, QD3D11RenderTargetData *rtD, RenderTargetUavUpdateState &rtUavState);
+     void resetShaderResources(QD3D11RenderTargetData *rtD, RenderTargetUavUpdateState &rtUavState);
+diff --git a/qtbase/src/gui/rhi/qrhid3d12.cpp b/qtbase/src/gui/rhi/qrhid3d12.cpp
+index e8e7f4f5..d6cb768c 100644
+--- a/qtbase/src/gui/rhi/qrhid3d12.cpp
++++ b/qtbase/src/gui/rhi/qrhid3d12.cpp
+@@ -889,6 +889,10 @@ bool QRhiD3D12::isFeatureSupported(QRhi::Feature feature) const
+     case QRhi::PerRenderTargetBlending:
+     case QRhi::SampleVariables:
+         return true;
++    case QRhi::InstanceIndexIncludesBaseInstance:
++        return false;
++    case QRhi::DepthClamp:
++        return true;
+     }
+     return false;
+ }
+@@ -1060,6 +1064,9 @@ void QRhiD3D12::setGraphicsPipeline(QRhiCommandBuffer *cb, QRhiGraphicsPipeline
+ 
+         if (psD->viewInstanceMask)
+             cbD->cmdList->SetViewInstanceMask(psD->viewInstanceMask);
++
++        if (cbD->hasCustomScissorSet && !psD->m_flags.testFlag(QRhiGraphicsPipeline::UsesScissor))
++            setDefaultScissor(cbD);
+     }
+ }
+ 
+@@ -1167,6 +1174,15 @@ void QRhiD3D12::setShaderResources(QRhiCommandBuffer *cb, QRhiShaderResourceBind
+ 
+     QD3D12ShaderResourceBindings *srbD = QRHI_RES(QD3D12ShaderResourceBindings, srb);
+ 
++    bool pipelineChanged = false;
++    if (gfxPsD) {
++        pipelineChanged = srbD->lastUsedGraphicsPipeline != gfxPsD;
++        srbD->lastUsedGraphicsPipeline = gfxPsD;
++    } else {
++        pipelineChanged = srbD->lastUsedComputePipeline != compPsD;
++        srbD->lastUsedComputePipeline = compPsD;
++    }
++
+     for (int i = 0, ie = srbD->m_bindings.size(); i != ie; ++i) {
+         const QRhiShaderResourceBinding::Data *b = shaderResourceBindingData(srbD->m_bindings[i]);
+         switch (b->type) {
+@@ -1175,6 +1191,7 @@ void QRhiD3D12::setShaderResources(QRhiCommandBuffer *cb, QRhiShaderResourceBind
+             QD3D12Buffer *bufD = QRHI_RES(QD3D12Buffer, b->u.ubuf.buf);
+             Q_ASSERT(bufD->m_usage.testFlag(QRhiBuffer::UniformBuffer));
+             Q_ASSERT(bufD->m_type == QRhiBuffer::Dynamic);
++            sanityCheckResourceOwnership(bufD);
+             bufD->executeHostWritesForFrameSlot(currentFrameSlot);
+         }
+             break;
+@@ -1190,6 +1207,8 @@ void QRhiD3D12::setShaderResources(QRhiCommandBuffer *cb, QRhiShaderResourceBind
+                 // images and samplers, so tex or sampler (but not both) can be
+                 // null here.
+                 Q_ASSERT(texD || samplerD);
++                sanityCheckResourceOwnership(texD);
++                sanityCheckResourceOwnership(samplerD);
+                 if (texD) {
+                     UINT state = 0;
+                     if (b->stage == QRhiShaderResourceBinding::FragmentStage) {
+@@ -1210,6 +1229,7 @@ void QRhiD3D12::setShaderResources(QRhiCommandBuffer *cb, QRhiShaderResourceBind
+         case QRhiShaderResourceBinding::ImageLoadStore:
+         {
+             QD3D12Texture *texD = QRHI_RES(QD3D12Texture, b->u.simage.tex);
++            sanityCheckResourceOwnership(texD);
+             if (QD3D12Resource *res = resourcePool.lookupRef(texD->handle)) {
+                 if (res->uavUsage) {
+                     if (res->uavUsage & QD3D12Resource::UavUsageWrite) {
+@@ -1239,6 +1259,7 @@ void QRhiD3D12::setShaderResources(QRhiCommandBuffer *cb, QRhiShaderResourceBind
+         case QRhiShaderResourceBinding::BufferLoadStore:
+         {
+             QD3D12Buffer *bufD = QRHI_RES(QD3D12Buffer, b->u.sbuf.buf);
++            sanityCheckResourceOwnership(bufD);
+             Q_ASSERT(bufD->m_usage.testFlag(QRhiBuffer::StorageBuffer));
+             Q_ASSERT(bufD->m_type != QRhiBuffer::Dynamic);
+             if (QD3D12Resource *res = resourcePool.lookupRef(bufD->handles[0])) {
+@@ -1271,7 +1292,7 @@ void QRhiD3D12::setShaderResources(QRhiCommandBuffer *cb, QRhiShaderResourceBind
+     const bool srbChanged = gfxPsD ? (cbD->currentGraphicsSrb != srb) : (cbD->currentComputeSrb != srb);
+     const bool srbRebuilt = cbD->currentSrbGeneration != srbD->generation;
+ 
+-    if (srbChanged || srbRebuilt || srbD->hasDynamicOffset) {
++    if (pipelineChanged || srbChanged || srbRebuilt || srbD->hasDynamicOffset) {
+         const QD3D12ShaderStageData *stageData = gfxPsD ? gfxPsD->stageData.data() : &compPsD->stageData;
+ 
+         // The order of root parameters must match
+@@ -1488,6 +1509,33 @@ void QRhiD3D12::setVertexInput(QRhiCommandBuffer *cb,
+     }
+ }
+ 
++void QRhiD3D12::setDefaultScissor(QD3D12CommandBuffer *cbD)
++{
++    cbD->hasCustomScissorSet = false;
++
++    const QSize outputSize = cbD->currentTarget->pixelSize();
++    std::array<float, 4> vp = cbD->currentViewport.viewport();
++    float x = 0, y = 0, w = 0, h = 0;
++
++    if (qFuzzyIsNull(vp[2]) && qFuzzyIsNull(vp[3])) {
++        x = 0;
++        y = 0;
++        w = outputSize.width();
++        h = outputSize.height();
++    } else {
++        // x,y is top-left in D3D12_RECT but bottom-left in QRhiScissor
++        qrhi_toTopLeftRenderTargetRect<Bounded>(outputSize, vp, &x, &y, &w, &h);
++    }
++
++    D3D12_RECT r;
++    r.left = x;
++    r.top = y;
++    // right and bottom are exclusive
++    r.right = x + w;
++    r.bottom = y + h;
++    cbD->cmdList->RSSetScissorRects(1, &r);
++}
++
+ void QRhiD3D12::setViewport(QRhiCommandBuffer *cb, const QRhiViewport &viewport)
+ {
+     QD3D12CommandBuffer *cbD = QRHI_RES(QD3D12CommandBuffer, cb);
+@@ -1509,17 +1557,11 @@ void QRhiD3D12::setViewport(QRhiCommandBuffer *cb, const QRhiViewport &viewport)
+     v.MaxDepth = viewport.maxDepth();
+     cbD->cmdList->RSSetViewports(1, &v);
+ 
++    cbD->currentViewport = viewport;
+     if (cbD->currentGraphicsPipeline
+-            && !cbD->currentGraphicsPipeline->flags().testFlag(QRhiGraphicsPipeline::UsesScissor))
++        && !cbD->currentGraphicsPipeline->flags().testFlag(QRhiGraphicsPipeline::UsesScissor))
+     {
+-        qrhi_toTopLeftRenderTargetRect<Bounded>(outputSize, viewport.viewport(), &x, &y, &w, &h);
+-        D3D12_RECT r;
+-        r.left = x;
+-        r.top = y;
+-        // right and bottom are exclusive
+-        r.right = x + w;
+-        r.bottom = y + h;
+-        cbD->cmdList->RSSetScissorRects(1, &r);
++        setDefaultScissor(cbD);
+     }
+ }
+ 
+@@ -1542,6 +1584,8 @@ void QRhiD3D12::setScissor(QRhiCommandBuffer *cb, const QRhiScissor &scissor)
+     r.right = x + w;
+     r.bottom = y + h;
+     cbD->cmdList->RSSetScissorRects(1, &r);
++
++    cbD->hasCustomScissorSet = true;
+ }
+ 
+ void QRhiD3D12::setBlendConstants(QRhiCommandBuffer *cb, const QColor &c)
+@@ -3816,6 +3860,7 @@ void QRhiD3D12::enqueueResourceUpdates(QD3D12CommandBuffer *cbD, QRhiResourceUpd
+                             QSize size = subresDesc.sourceSize().isEmpty() ? img.size() : subresDesc.sourceSize();
+                             size.setWidth(qMin(size.width(), img.width() - srcPos.x()));
+                             size.setHeight(qMin(size.height(), img.height() - srcPos.y()));
++                            size = clampedSubResourceUploadSize(size, dstPos, level, texD->m_pixelSize);
+ 
+                             footprint.Width = size.width();
+                             footprint.Height = size.height();
+@@ -6188,6 +6233,7 @@ bool QD3D12GraphicsPipeline::create()
+     struct {
+         QD3D12PipelineStateSubObject<ID3D12RootSignature *, D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_ROOT_SIGNATURE> rootSig;
+         QD3D12PipelineStateSubObject<D3D12_INPUT_LAYOUT_DESC, D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_INPUT_LAYOUT> inputLayout;
++        QD3D12PipelineStateSubObject<D3D12_INDEX_BUFFER_STRIP_CUT_VALUE, D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_IB_STRIP_CUT_VALUE> primitiveRestartValue;
+         QD3D12PipelineStateSubObject<D3D12_PRIMITIVE_TOPOLOGY_TYPE, D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PRIMITIVE_TOPOLOGY> primitiveTopology;
+         QD3D12PipelineStateSubObject<D3D12_SHADER_BYTECODE, D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_VS> VS;
+         QD3D12PipelineStateSubObject<D3D12_SHADER_BYTECODE, D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_HS> HS;
+@@ -6246,6 +6292,8 @@ bool QD3D12GraphicsPipeline::create()
+     stream.inputLayout.object.NumElements = inputDescs.count();
+     stream.inputLayout.object.pInputElementDescs = inputDescs.isEmpty() ? nullptr : inputDescs.constData();
+ 
++    stream.primitiveRestartValue.object = D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_0xFFFFFFFF;
++
+     stream.primitiveTopology.object = toD3DTopologyType(m_topology);
+     topology = toD3DTopology(m_topology, m_patchControlPointCount);
+ 
+@@ -6283,7 +6331,7 @@ bool QD3D12GraphicsPipeline::create()
+     stream.rasterizerState.object.FrontCounterClockwise = m_frontFace == CCW;
+     stream.rasterizerState.object.DepthBias = m_depthBias;
+     stream.rasterizerState.object.SlopeScaledDepthBias = m_slopeScaledDepthBias;
+-    stream.rasterizerState.object.DepthClipEnable = TRUE;
++    stream.rasterizerState.object.DepthClipEnable = m_depthClamp ? FALSE : TRUE;
+     stream.rasterizerState.object.MultisampleEnable = sampleDesc.Count > 1;
+ 
+     stream.depthStencilState.object.DepthEnable = m_depthTest;
+@@ -6955,7 +7003,11 @@ bool QD3D12SwapChain::createOrResize()
+                 rhiD->dxgiFactory->MakeWindowAssociation(hwnd, DXGI_MWA_NO_WINDOW_CHANGES);
+             }
+         }
+-        if (FAILED(hr)) {
++        if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) {
++            qWarning("Device loss detected during swapchain creation");
++            rhiD->deviceLost = true;
++            return false;
++        } else if (FAILED(hr)) {
+             qWarning("Failed to create D3D12 swapchain: %s"
+                      " (Width=%u Height=%u Format=%u SampleCount=%u BufferCount=%u Scaling=%u SwapEffect=%u Stereo=%u)",
+                      qPrintable(QSystemError::windowsComString(hr)),
+diff --git a/qtbase/src/gui/text/windows/qwindowsfontdatabasebase.cpp b/qtbase/src/gui/text/windows/qwindowsfontdatabasebase.cpp
+index e21db2fc..e90539f1 100644
+--- a/qtbase/src/gui/text/windows/qwindowsfontdatabasebase.cpp
++++ b/qtbase/src/gui/text/windows/qwindowsfontdatabasebase.cpp
+@@ -18,6 +18,8 @@
+ #  include "qwindowsfontenginedirectwrite_p.h"
+ #endif
+ 
++#include <utility> // for std::pair
++
+ QT_BEGIN_NAMESPACE
+ 
+ using namespace Qt::StringLiterals;
+@@ -363,7 +365,7 @@ namespace {
+         inline void addKey(const QByteArray &fontData, const QString &filename)
+         {
+             if (!m_fontDatas.contains(fontData.data()))
+-                m_fontDatas.insert(fontData.data(), qMakePair(fontData, filename));
++                m_fontDatas.insert(fontData.data(), {fontData, filename});
+         }
+ 
+         HRESULT STDMETHODCALLTYPE GetFilePathLengthFromKey(void const* fontFileReferenceKey,
+@@ -433,7 +435,7 @@ namespace {
+ 
+     private:
+         ULONG m_referenceCount;
+-        QHash<const void *, QPair<QByteArray, QString> > m_fontDatas;
++        QHash<const void *, std::pair<QByteArray, QString> > m_fontDatas;
+     };
+ 
+     HRESULT STDMETHODCALLTYPE DirectWriteFontFileLoader::QueryInterface(const IID &iid,
+@@ -623,6 +625,11 @@ void QWindowsFontDatabaseBase::createDirectWriteFactory(IDWriteFactory **factory
+         DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory5), &result);
+     }
+ 
++    if (result == nullptr) {
++        qCDebug(lcQpaFonts) << "Trying to create IDWriteFactory4";
++        DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory4), &result);
++    }
++
+     if (result == nullptr) {
+         qCDebug(lcQpaFonts) << "Trying to create IDWriteFactory3";
+         DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory3), &result);
+@@ -1007,6 +1014,7 @@ static const char *ch_TW_tryFonts [] = {
+ };
+ 
+ static const char *kr_tryFonts[] = {
++    "Malgun Gothic",
+     "Gulim",
+     "Arial",
+     "PMingLiU",
+diff --git a/qtbase/src/plugins/platforms/direct2d/CMakeLists.txt b/qtbase/src/plugins/platforms/direct2d/CMakeLists.txt
+index 7f0db98e..a8d48bf4 100644
+--- a/qtbase/src/plugins/platforms/direct2d/CMakeLists.txt
++++ b/qtbase/src/plugins/platforms/direct2d/CMakeLists.txt
+@@ -33,6 +33,8 @@ qt_internal_add_plugin(QWindowsDirect2DIntegrationPlugin
+         ../windows/qwindowstheme.cpp ../windows/qwindowstheme.h
+         ../windows/qwindowsthreadpoolrunner.h
+         ../windows/qwindowswindow.cpp ../windows/qwindowswindow.h
++        ../windows/qwindowswindowclassdescription.cpp ../windows/qwindowswindowclassdescription.h
++        ../windows/qwindowswindowclassregistry.cpp ../windows/qwindowswindowclassregistry.h
+         qwindowsdirect2dbackingstore.cpp qwindowsdirect2dbackingstore.h
+         qwindowsdirect2dbitmap.cpp qwindowsdirect2dbitmap.h
+         qwindowsdirect2dcontext.cpp qwindowsdirect2dcontext.h
+@@ -213,7 +215,9 @@ qt_internal_extend_target(QWindowsDirect2DIntegrationPlugin CONDITION QT_FEATURE
+ )
+ 
+ # This is loaded dynamically when using MINGW as its import library is incomplete
+-qt_internal_extend_target(QWindowsDirect2DIntegrationPlugin CONDITION MSVC AND QT_FEATURE_accessibility
++qt_internal_extend_target(
++    QWindowsDirect2DIntegrationPlugin
++        CONDITION (MSVC OR CMAKE_CXX_SIMULATE_ID STREQUAL "MSVC") AND QT_FEATURE_accessibility
+     LIBRARIES
+         uiautomationcore
+ )
+diff --git a/qtbase/src/plugins/platforms/windows/CMakeLists.txt b/qtbase/src/plugins/platforms/windows/CMakeLists.txt
+index 443f1766..d5c8d8fa 100644
+--- a/qtbase/src/plugins/platforms/windows/CMakeLists.txt
++++ b/qtbase/src/plugins/platforms/windows/CMakeLists.txt
+@@ -38,6 +38,8 @@ qt_internal_add_plugin(QWindowsIntegrationPlugin
+         qwindowstheme.cpp qwindowstheme.h
+         qwindowsthreadpoolrunner.h
+         qwindowswindow.cpp qwindowswindow.h
++        qwindowswindowclassdescription.cpp qwindowswindowclassdescription.h
++        qwindowswindowclassregistry.cpp qwindowswindowclassregistry.h
+     NO_UNITY_BUILD_SOURCES
+         qwindowspointerhandler.cpp
+     DEFINES
+@@ -202,7 +204,9 @@ qt_internal_extend_target(QWindowsIntegrationPlugin CONDITION QT_FEATURE_accessi
+ )
+ 
+ # This is loaded dynamically when using MINGW as its import library is incomplete
+-qt_internal_extend_target(QWindowsIntegrationPlugin CONDITION MSVC AND QT_FEATURE_accessibility
++qt_internal_extend_target(
++    QWindowsIntegrationPlugin
++        CONDITION (MSVC OR CMAKE_CXX_SIMULATE_ID STREQUAL "MSVC") AND QT_FEATURE_accessibility
+     LIBRARIES
+         uiautomationcore
+ )
+diff --git a/qtbase/src/plugins/platforms/windows/qwin10helpers.cpp b/qtbase/src/plugins/platforms/windows/qwin10helpers.cpp
+index df85914a..8412b0e8 100644
+--- a/qtbase/src/plugins/platforms/windows/qwin10helpers.cpp
++++ b/qtbase/src/plugins/platforms/windows/qwin10helpers.cpp
+@@ -1,5 +1,6 @@
+ // Copyright (C) 2016 The Qt Company Ltd.
+ // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
++// Qt-Security score:significant reason:default
+ 
+ #include "qwin10helpers.h"
+ 
+diff --git a/qtbase/src/plugins/platforms/windows/qwindowscontext.cpp b/qtbase/src/plugins/platforms/windows/qwindowscontext.cpp
+index c4d86447..03b5f53e 100644
+--- a/qtbase/src/plugins/platforms/windows/qwindowscontext.cpp
++++ b/qtbase/src/plugins/platforms/windows/qwindowscontext.cpp
+@@ -1,6 +1,7 @@
+ // Copyright (C) 2013 Samuel Gaist <samuel.gaist@edeltech.ch>
+ // Copyright (C) 2016 The Qt Company Ltd.
+ // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
++// Qt-Security score:significant reason:default
+ 
+ #include "qwindowscontext.h"
+ #include "qwindowsintegration.h"
+@@ -26,6 +27,7 @@
+ #endif
+ #include "qwindowsscreen.h"
+ #include "qwindowstheme.h"
++#include "qwindowswindowclassregistry.h"
+ 
+ #include <QtGui/qwindow.h>
+ #include <qpa/qwindowsysteminterface.h>
+@@ -35,21 +37,20 @@
+ #include <QtGui/qopenglcontext.h>
+ #include <QtGui/qpointingdevice.h>
+ 
+-#include <QtCore/qset.h>
+ #include <QtCore/qhash.h>
+-#include <QtCore/qlibraryinfo.h>
+ #include <QtCore/qstringlist.h>
+ #include <QtCore/qdebug.h>
+ #include <QtCore/qsysinfo.h>
+ #include <QtCore/qscopedpointer.h>
+-#include <QtCore/quuid.h>
+ #include <QtCore/private/qsystemlibrary_p.h>
++#include <QtCore/qscopeguard.h>
+ #include <QtCore/private/qwinregistry_p.h>
+ #if QT_CONFIG(cpp_winrt)
+ #  include <QtCore/private/qfactorycacheregistration_p.h>
+ #endif
+ #include <QtCore/private/qsystemerror_p.h>
+ #include <QtCore/private/qlegacyshims_win_p.h>
++#include <QtCore/private/quniquehandle_types_windows_p.h>
+ 
+ #include <QtGui/private/qwindowsguieventdispatcher_p.h>
+ #include <QtGui/private/qwindowsthemecache_p.h>
+@@ -272,9 +273,9 @@ struct QWindowsContextPrivate {
+     QWindowsContextPrivate();
+ 
+     unsigned m_systemInfo = 0;
+-    QSet<QString> m_registeredWindowClassNames;
++    QWindowsWindowClassRegistry m_windowClassRegistry{ qWindowsWndProc };
+     QWindowsContext::HandleBaseWindowHash m_windows;
+-    HDC m_displayContext = nullptr;
++    QUniqueHDCHandle m_displayContext;
+     int m_defaultDPI = 96;
+     QWindowsKeyMapper m_keyMapper;
+     QWindowsPointerHandler m_pointerHandler;
+@@ -302,8 +303,8 @@ QWindowsContextPrivate::QWindowsContextPrivate()
+ 
+     if (m_pointerHandler.touchDevice())
+         m_systemInfo |= QWindowsContext::SI_SupportsTouch;
+-    m_displayContext = GetDC(nullptr);
+-    m_defaultDPI = GetDeviceCaps(m_displayContext, LOGPIXELSY);
++    m_displayContext.reset(GetDC(nullptr));
++    m_defaultDPI = GetDeviceCaps(m_displayContext.get(), LOGPIXELSY);
+     if (useRTL_Extensions()) {
+         m_systemInfo |= QWindowsContext::SI_RTL_Extensions;
+         m_keyMapper.setUseRTLExtensions(true);
+@@ -317,9 +318,6 @@ QWindowsContextPrivate::QWindowsContextPrivate()
+ QWindowsContext::QWindowsContext() :
+     d(new QWindowsContextPrivate)
+ {
+-#ifdef Q_CC_MSVC
+-#    pragma warning( disable : 4996 )
+-#endif
+     m_instance = this;
+ }
+ 
+@@ -340,7 +338,6 @@ QWindowsContext::~QWindowsContext()
+ 
+     d->m_screenManager.destroyWindow();
+ 
+-    unregisterWindowClasses();
+     if (d->m_oleInitializeResult == S_OK || d->m_oleInitializeResult == S_FALSE) {
+ #ifdef QT_USE_FACTORY_CACHE_REGISTRATION
+         detail::QWinRTFactoryCacheRegistration::clearAllCaches();
+@@ -349,8 +346,6 @@ QWindowsContext::~QWindowsContext()
+     }
+ 
+     d->m_screenManager.clearScreens(); // Order: Potentially calls back to the windows.
+-    if (d->m_displayContext)
+-        ReleaseDC(nullptr, d->m_displayContext);
+     m_instance = nullptr;
+ }
+ 
+@@ -571,6 +566,10 @@ QDebug operator<<(QDebug d, QtWindows::DpiAwareness dpiAwareness)
+ bool QWindowsContext::setProcessDpiAwareness(QtWindows::DpiAwareness dpiAwareness)
+ {
+     qCDebug(lcQpaWindow) << __FUNCTION__ << dpiAwareness;
++    [[maybe_unused]] const auto updatePMv2Status = qScopeGuard([](){
++        QWindowsContextPrivate::m_v2DpiAware =
++            processDpiAwareness() == QtWindows::DpiAwareness::PerMonitorVersion2;
++    });
+     if (processDpiAwareness() == dpiAwareness)
+         return true;
+     const auto context = qtDpiAwarenessToDpiAwarenessContext(dpiAwareness);
+@@ -588,8 +587,6 @@ bool QWindowsContext::setProcessDpiAwareness(QtWindows::DpiAwareness dpiAwarenes
+             << "(https://doc.qt.io/qt-6/highdpi.html#configuring-windows).";
+         return false;
+     }
+-    QWindowsContextPrivate::m_v2DpiAware
+-        = processDpiAwareness() == QtWindows::DpiAwareness::PerMonitorVersion2;
+     return true;
+ }
+ 
+@@ -637,7 +634,7 @@ int QWindowsContext::defaultDPI() const
+ 
+ HDC QWindowsContext::displayContext() const
+ {
+-    return d->m_displayContext;
++    return d->m_displayContext.get();
+ }
+ 
+ QWindow *QWindowsContext::keyGrabber() const
+@@ -650,159 +647,9 @@ void QWindowsContext::setKeyGrabber(QWindow *w)
+     d->m_keyMapper.setKeyGrabber(w);
+ }
+ 
+-QString QWindowsContext::classNamePrefix()
+-{
+-    static QString result;
+-    if (result.isEmpty()) {
+-        QTextStream str(&result);
+-        str << "Qt" << QT_VERSION_MAJOR << QT_VERSION_MINOR << QT_VERSION_PATCH;
+-        if (QLibraryInfo::isDebugBuild())
+-            str << 'd';
+-#ifdef QT_NAMESPACE
+-#  define xstr(s) str(s)
+-#  define str(s) #s
+-        str << xstr(QT_NAMESPACE);
+-#  undef str
+-#  undef xstr
+-#endif
+-    }
+-    return result;
+-}
+-
+-// Window class registering code (from qapplication_win.cpp)
+-
+-QString QWindowsContext::registerWindowClass(const QWindow *w)
+-{
+-    Q_ASSERT(w);
+-    const Qt::WindowFlags flags = w->flags();
+-    const Qt::WindowFlags type = flags & Qt::WindowType_Mask;
+-    // Determine style and icon.
+-    uint style = CS_DBLCLKS;
+-    bool icon = true;
+-    // The following will not set CS_OWNDC for any widget window, even if it contains a
+-    // QOpenGLWidget or QQuickWidget later on. That cannot be detected at this stage.
+-    if (w->surfaceType() == QSurface::OpenGLSurface || (flags & Qt::MSWindowsOwnDC))
+-        style |= CS_OWNDC;
+-    if (!(flags & Qt::NoDropShadowWindowHint)
+-        && (type == Qt::Popup || w->property("_q_windowsDropShadow").toBool())) {
+-        style |= CS_DROPSHADOW;
+-    }
+-    switch (type) {
+-    case Qt::Tool:
+-    case Qt::ToolTip:
+-    case Qt::Popup:
+-        style |= CS_SAVEBITS; // Save/restore background
+-        icon = false;
+-        break;
+-    case Qt::Dialog:
+-        if (!(flags & Qt::WindowSystemMenuHint))
+-            icon = false; // QTBUG-2027, dialogs without system menu.
+-        break;
+-    }
+-    // Create a unique name for the flag combination
+-    QString cname = classNamePrefix();
+-    cname += "QWindow"_L1;
+-    switch (type) {
+-    case Qt::Tool:
+-        cname += "Tool"_L1;
+-        break;
+-    case Qt::ToolTip:
+-        cname += "ToolTip"_L1;
+-        break;
+-    case Qt::Popup:
+-        cname += "Popup"_L1;
+-        break;
+-    default:
+-        break;
+-    }
+-    if (style & CS_DROPSHADOW)
+-        cname += "DropShadow"_L1;
+-    if (style & CS_SAVEBITS)
+-        cname += "SaveBits"_L1;
+-    if (style & CS_OWNDC)
+-        cname += "OwnDC"_L1;
+-    if (icon)
+-        cname += "Icon"_L1;
+-
+-    return registerWindowClass(cname, qWindowsWndProc, style, nullptr, icon);
+-}
+-
+-QString QWindowsContext::registerWindowClass(QString cname,
+-                                             WNDPROC proc,
+-                                             unsigned style,
+-                                             HBRUSH brush,
+-                                             bool icon)
+-{
+-    // since multiple Qt versions can be used in one process
+-    // each one has to have window class names with a unique name
+-    // The first instance gets the unmodified name; if the class
+-    // has already been registered by another instance of Qt then
+-    // add a UUID. The check needs to be performed for each name
+-    // in case new message windows are added (QTBUG-81347).
+-    // Note: GetClassInfo() returns != 0 when a class exists.
+-    const auto appInstance = static_cast<HINSTANCE>(GetModuleHandle(nullptr));
+-    WNDCLASS wcinfo;
+-    const bool classExists = GetClassInfo(appInstance, reinterpret_cast<LPCWSTR>(cname.utf16()), &wcinfo) != FALSE
+-        && wcinfo.lpfnWndProc != proc;
+-
+-    if (classExists)
+-        cname += QUuid::createUuid().toString();
+-
+-    if (d->m_registeredWindowClassNames.contains(cname))        // already registered in our list
+-        return cname;
+-
+-    WNDCLASSEX wc;
+-    wc.cbSize       = sizeof(WNDCLASSEX);
+-    wc.style        = style;
+-    wc.lpfnWndProc  = proc;
+-    wc.cbClsExtra   = 0;
+-    wc.cbWndExtra   = 0;
+-    wc.hInstance    = appInstance;
+-    wc.hCursor      = nullptr;
+-    wc.hbrBackground = brush;
+-    if (icon) {
+-        wc.hIcon = static_cast<HICON>(LoadImage(appInstance, L"IDI_ICON1", IMAGE_ICON, 0, 0, LR_DEFAULTSIZE));
+-        if (wc.hIcon) {
+-            int sw = GetSystemMetrics(SM_CXSMICON);
+-            int sh = GetSystemMetrics(SM_CYSMICON);
+-            wc.hIconSm = static_cast<HICON>(LoadImage(appInstance, L"IDI_ICON1", IMAGE_ICON, sw, sh, 0));
+-        } else {
+-            wc.hIcon = static_cast<HICON>(LoadImage(nullptr, IDI_APPLICATION, IMAGE_ICON, 0, 0, LR_DEFAULTSIZE | LR_SHARED));
+-            wc.hIconSm = nullptr;
+-        }
+-    } else {
+-        wc.hIcon    = nullptr;
+-        wc.hIconSm  = nullptr;
+-    }
+-
+-    wc.lpszMenuName  = nullptr;
+-    wc.lpszClassName = reinterpret_cast<LPCWSTR>(cname.utf16());
+-    ATOM atom = RegisterClassEx(&wc);
+-    if (!atom)
+-        qErrnoWarning("QApplication::regClass: Registering window class '%s' failed.",
+-                      qPrintable(cname));
+-
+-    d->m_registeredWindowClassNames.insert(cname);
+-    qCDebug(lcQpaWindow).nospace() << __FUNCTION__ << ' ' << cname
+-        << " style=0x" << Qt::hex << style << Qt::dec
+-        << " brush=" << brush << " icon=" << icon << " atom=" << atom;
+-    return cname;
+-}
+-
+-void QWindowsContext::unregisterWindowClasses()
+-{
+-    const auto appInstance = static_cast<HINSTANCE>(GetModuleHandle(nullptr));
+-
+-    for (const QString &name : std::as_const(d->m_registeredWindowClassNames)) {
+-        if (!UnregisterClass(reinterpret_cast<LPCWSTR>(name.utf16()), appInstance) && QWindowsContext::verbose)
+-            qErrnoWarning("UnregisterClass failed for '%s'", qPrintable(name));
+-    }
+-    d->m_registeredWindowClassNames.clear();
+-}
+-
+ int QWindowsContext::screenDepth() const
+ {
+-    return GetDeviceCaps(d->m_displayContext, BITSPIXEL);
++    return GetDeviceCaps(d->m_displayContext.get(), BITSPIXEL);
+ }
+ 
+ void QWindowsContext::addWindow(HWND hwnd, QWindowsWindow *w)
+@@ -993,7 +840,7 @@ HWND QWindowsContext::createDummyWindow(const QString &classNameIn,
+ {
+     if (!wndProc)
+         wndProc = DefWindowProc;
+-    QString className = registerWindowClass(classNamePrefix() + classNameIn, wndProc);
++    QString className = d->m_windowClassRegistry.registerWindowClass(classNameIn, wndProc);
+     return CreateWindowEx(0, reinterpret_cast<LPCWSTR>(className.utf16()),
+                           windowName, style,
+                           CW_USEDEFAULT, CW_USEDEFAULT,
+diff --git a/qtbase/src/plugins/platforms/windows/qwindowscontext.h b/qtbase/src/plugins/platforms/windows/qwindowscontext.h
+index 869d6ebd..a856727b 100644
+--- a/qtbase/src/plugins/platforms/windows/qwindowscontext.h
++++ b/qtbase/src/plugins/platforms/windows/qwindowscontext.h
+@@ -1,5 +1,6 @@
+ // Copyright (C) 2016 The Qt Company Ltd.
+ // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
++// Qt-Security score:significant reason:default
+ 
+ #ifndef QWINDOWSCONTEXT_H
+ #define QWINDOWSCONTEXT_H
+@@ -163,11 +164,6 @@ public:
+ 
+     int defaultDPI() const;
+ 
+-    static QString classNamePrefix();
+-    QString registerWindowClass(const QWindow *w);
+-    QString registerWindowClass(QString cname, WNDPROC proc,
+-                                unsigned style = 0, HBRUSH brush = nullptr,
+-                                bool icon = false);
+     HWND createDummyWindow(const QString &classNameIn,
+                            const wchar_t *windowName,
+                            WNDPROC wndProc = nullptr, DWORD style = WS_OVERLAPPED);
+@@ -255,7 +251,6 @@ private:
+     bool handleContextMenuEvent(QWindow *window, const MSG &msg);
+ #endif
+     void handleExitSizeMove(QWindow *window);
+-    void unregisterWindowClasses();
+ 
+     QScopedPointer<QWindowsContextPrivate> d;
+     static QWindowsContext *m_instance;
+diff --git a/qtbase/src/plugins/platforms/windows/qwindowsdrag.cpp b/qtbase/src/plugins/platforms/windows/qwindowsdrag.cpp
+index e565b998..96706e14 100644
+--- a/qtbase/src/plugins/platforms/windows/qwindowsdrag.cpp
++++ b/qtbase/src/plugins/platforms/windows/qwindowsdrag.cpp
+@@ -1,5 +1,6 @@
+ // Copyright (C) 2016 The Qt Company Ltd.
+ // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
++// Qt-Security score:significant reason:default
+ 
+ #include <QtCore/qt_windows.h>
+ #include "qwindowsdrag.h"
+diff --git a/qtbase/src/plugins/platforms/windows/qwindowsintegration.cpp b/qtbase/src/plugins/platforms/windows/qwindowsintegration.cpp
+index 837027df..e2aae1be 100644
+--- a/qtbase/src/plugins/platforms/windows/qwindowsintegration.cpp
++++ b/qtbase/src/plugins/platforms/windows/qwindowsintegration.cpp
+@@ -1,6 +1,7 @@
+ // Copyright (C) 2016 The Qt Company Ltd.
+ // Copyright (C) 2013 Samuel Gaist <samuel.gaist@edeltech.ch>
+ // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
++// Qt-Security score:significant reason:default
+ 
+ #include "qwindowsintegration.h"
+ #include "qwindowswindow.h"
+@@ -262,6 +263,11 @@ bool QWindowsIntegration::hasCapability(QPlatformIntegration::Capability cap) co
+         return true;
+ #ifndef QT_NO_OPENGL
+     case OpenGL:
++#if !QT_CONFIG(run_opengl_tests)
++        // Workaround for build configs on WoA that don't have OpenGL installed
++        // FIXME: Detect at runtime
++        return false;
++#endif
+         return true;
+     case ThreadedOpenGL:
+         if (const QWindowsStaticOpenGLContext *glContext = QWindowsIntegration::staticOpenGLContext())
+@@ -274,8 +280,6 @@ bool QWindowsIntegration::hasCapability(QPlatformIntegration::Capability cap) co
+         return true;
+     case ForeignWindows:
+         return true;
+-    case RasterGLSurface:
+-        return true;
+     case AllGLFunctionsQueryable:
+         return true;
+     case SwitchableWidgetComposition:
+@@ -290,13 +294,6 @@ bool QWindowsIntegration::hasCapability(QPlatformIntegration::Capability cap) co
+ 
+ QPlatformWindow *QWindowsIntegration::createPlatformWindow(QWindow *window) const
+ {
+-    if (window->type() == Qt::Desktop) {
+-        auto *result = new QWindowsDesktopWindow(window);
+-        qCDebug(lcQpaWindow) << "Desktop window:" << window
+-            << Qt::showbase << Qt::hex << result->winId() << Qt::noshowbase << Qt::dec << result->geometry();
+-        return result;
+-    }
+-
+     QWindowsWindowData requested;
+     requested.flags = window->flags();
+     requested.geometry = window->isTopLevel()
+diff --git a/qtbase/src/plugins/platforms/windows/qwindowskeymapper.cpp b/qtbase/src/plugins/platforms/windows/qwindowskeymapper.cpp
+index 2da0fb20..08397ebe 100644
+--- a/qtbase/src/plugins/platforms/windows/qwindowskeymapper.cpp
++++ b/qtbase/src/plugins/platforms/windows/qwindowskeymapper.cpp
+@@ -1,5 +1,6 @@
+ // Copyright (C) 2016 The Qt Company Ltd.
+ // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
++// Qt-Security score:significant reason:default
+ 
+ #include "qwindowskeymapper.h"
+ #include "qwindowscontext.h"
+@@ -616,6 +617,14 @@ void QWindowsKeyMapper::changeKeyboard()
+         && (LCIDFontSig[7] & wchar_t(0x0800)))
+         bidi = true;
+ 
++    WCHAR buffer[KL_NAMELENGTH];
++    if (GetKeyboardLayoutName(buffer)) {
++        // https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/windows-language-pack-default-values
++        QString newKLID = QString::fromStdWString(buffer);
++        m_isHebrewLayout = newKLID.endsWith(QLatin1String("40D"), Qt::CaseInsensitive);
++    } else
++        m_isHebrewLayout = false;
++
+     keyboardInputDirection = bidi ? Qt::RightToLeft : Qt::LeftToRight;
+     m_seenAltGr = false;
+ }
+@@ -700,8 +709,9 @@ void QWindowsKeyMapper::updatePossibleKeyCodes(unsigned char *kbdBuffer, quint32
+     quint32 fallbackKey = winceKeyBend(vk_key);
+     if (!fallbackKey || fallbackKey == Qt::Key_unknown) {
+         fallbackKey = 0;
+-        if (vk_key != keyLayout[vk_key].qtKey[0] && vk_key != keyLayout[vk_key].qtKey[1]
+-            && vk_key < 0x5B && vk_key > 0x2F)
++        if (vk_key != keyLayout[vk_key].qtKey[0]
++            && (vk_key != keyLayout[vk_key].qtKey[1] || m_isHebrewLayout)
++            && (vk_key < 0x5B && vk_key > 0x2F))
+             fallbackKey = vk_key;
+     }
+     keyLayout[vk_key].qtKey[8] = fallbackKey;
+diff --git a/qtbase/src/plugins/platforms/windows/qwindowspointerhandler.cpp b/qtbase/src/plugins/platforms/windows/qwindowspointerhandler.cpp
+index 809199a2..ca61dd47 100644
+--- a/qtbase/src/plugins/platforms/windows/qwindowspointerhandler.cpp
++++ b/qtbase/src/plugins/platforms/windows/qwindowspointerhandler.cpp
+@@ -1,5 +1,6 @@
+ // Copyright (C) 2019 The Qt Company Ltd.
+ // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
++// Qt-Security score:significant reason:default
+ 
+ #include <QtCore/qt_windows.h>
+ 
+@@ -338,10 +339,6 @@ void QWindowsPointerHandler::handleCaptureRelease(QWindow *window,
+         platformWindow->setFlag(QWindowsWindow::AutoMouseCapture);
+         qCDebug(lcQpaEvents) << "Automatic mouse capture " << window;
+ 
+-        // Implement "Click to focus" for native child windows (unless it is a native widget window).
+-        if (!window->isTopLevel() && !window->inherits("QWidgetWindow") && QGuiApplication::focusWindow() != window)
+-            window->requestActivate();
+-
+     } else if (platformWindow->hasMouseCapture()
+                && platformWindow->testFlag(QWindowsWindow::AutoMouseCapture)
+                && eventType == QEvent::MouseButtonRelease
+@@ -420,6 +417,27 @@ void QWindowsPointerHandler::handleEnterLeave(QWindow *window,
+     m_previousCaptureWindow = hasCapture ? window : nullptr;
+ }
+ 
++void QWindowsPointerHandler::handleWindowActivation(QWindow *window,
++                                                    QEvent::Type eventType)
++{
++    if (eventType != QEvent::MouseButtonPress)
++        return;
++
++    auto *focusWindow = QGuiApplication::focusWindow();
++    if (window->isTopLevel()) {
++        // Windows does not send WM_MOUSEACTIVATE to an already-active top-level,
++        // so if focus currently sits in an embedded descendant (e.g. a native
++        // child window hosted via WindowContainer) we have to activate the
++        // top-level ourselves on mouse press.
++        if (focusWindow && window->isAncestorOf(focusWindow))
++            window->requestActivate();
++    } else if (!window->inherits("QWidgetWindow") && focusWindow != window) {
++        // "Click to focus" for native child windows. Skip QWidgetWindow, which
++        // handles focus at the widget level.
++        window->requestActivate();
++    }
++}
++
+ bool QWindowsPointerHandler::translateTouchEvent(QWindow *window, HWND hwnd,
+                                                  QtWindows::WindowsEventType et,
+                                                  MSG msg, PVOID vTouchInfo, quint32 count)
+@@ -859,6 +877,7 @@ bool QWindowsPointerHandler::translateMouseEvent(QWindow *window,
+         return true;
+     }
+ 
++    handleWindowActivation(window, mouseEvent.type);
+     handleCaptureRelease(window, currentWindowUnderPointer, hwnd, mouseEvent.type, mouseButtons);
+     handleEnterLeave(window, currentWindowUnderPointer, globalPos);
+ 
+diff --git a/qtbase/src/plugins/platforms/windows/qwindowsscreen.cpp b/qtbase/src/plugins/platforms/windows/qwindowsscreen.cpp
+index ac7dc13a..02cafc9a 100644
+--- a/qtbase/src/plugins/platforms/windows/qwindowsscreen.cpp
++++ b/qtbase/src/plugins/platforms/windows/qwindowsscreen.cpp
+@@ -1,5 +1,6 @@
+ // Copyright (C) 2016 The Qt Company Ltd.
+ // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
++// Qt-Security score:significant reason:default
+ 
+ #include "qwindowsscreen.h"
+ #include "qwindowscontext.h"
+@@ -7,6 +8,7 @@
+ #include "qwindowsintegration.h"
+ #include "qwindowscursor.h"
+ #include "qwindowstheme.h"
++#include "qwindowswindowclassregistry.h"
+ 
+ #include <QtCore/qt_windows.h>
+ 
+@@ -16,7 +18,6 @@
+ #include <qpa/qwindowsysteminterface.h>
+ #include <QtCore/private/qsystemerror_p.h>
+ #include <QtGui/private/qedidparser_p.h>
+-#include <private/qhighdpiscaling_p.h>
+ #include <private/qwindowsfontdatabasebase_p.h>
+ #include <private/qpixmap_win_p.h>
+ #include <private/quniquehandle_p.h>
+@@ -161,12 +162,14 @@ static void setMonitorDataFromSetupApi(QWindowsScreenData &data,
+         // The first element in the clone group is the main monitor.
+         deviceName.header.adapterId = pathGroup[0].targetInfo.adapterId;
+         deviceName.header.id = pathGroup[0].targetInfo.id;
+-        if (DisplayConfigGetDeviceInfo(&deviceName.header) == ERROR_SUCCESS) {
++        const LONG result = DisplayConfigGetDeviceInfo(&deviceName.header);
++        if (result == ERROR_SUCCESS) {
+             data.devicePath = QString::fromWCharArray(deviceName.monitorDevicePath);
+         } else {
+-            qCWarning(lcQpaScreen)
++            // This can fail for virtual screens or disconnected displays - not an error
++            qCDebug(lcQpaScreen)
+                     << u"Unable to get device information for %1:"_s.arg(pathGroup[0].targetInfo.id)
+-                    << QSystemError::windowsString();
++                    << QSystemError::windowsString(result);
+         }
+     }
+ 
+@@ -182,10 +185,12 @@ static void setMonitorDataFromSetupApi(QWindowsScreenData &data,
+         deviceName.header.size = sizeof(DISPLAYCONFIG_TARGET_DEVICE_NAME);
+         deviceName.header.adapterId = path.targetInfo.adapterId;
+         deviceName.header.id = path.targetInfo.id;
+-        if (DisplayConfigGetDeviceInfo(&deviceName.header) != ERROR_SUCCESS) {
+-            qCWarning(lcQpaScreen)
++        const LONG result = DisplayConfigGetDeviceInfo(&deviceName.header);
++        if (result != ERROR_SUCCESS) {
++            // This can fail for virtual screens (WinDisc) or disconnected displays - not an error
++            qCDebug(lcQpaScreen)
+                     << u"Unable to get device information for %1:"_s.arg(path.targetInfo.id)
+-                    << QSystemError::windowsString();
++                    << QSystemError::windowsString(result);
+             continue;
+         }
+ 
+@@ -204,7 +209,8 @@ static void setMonitorDataFromSetupApi(QWindowsScreenData &data,
+ 
+         if (!SetupDiOpenDeviceInterfaceW(devInfo.get(), deviceName.monitorDevicePath, DIODI_NO_ADD,
+                                          &deviceInterfaceData)) {
+-            qCWarning(lcQpaScreen)
++            // This can fail for virtual screens with no physical target - not an error
++            qCDebug(lcQpaScreen)
+                     << u"Unable to open monitor interface to %1:"_s.arg(data.deviceName)
+                     << QSystemError::windowsString();
+             continue;
+@@ -553,12 +559,14 @@ void QWindowsScreen::handleChanges(const QWindowsScreenData &newData)
+     const bool orientationChanged = m_data.orientation != newData.orientation;
+     const bool primaryChanged = (newData.flags & QWindowsScreenData::PrimaryScreen)
+             && !(m_data.flags & QWindowsScreenData::PrimaryScreen);
++    const bool refreshRateChanged = m_data.refreshRateHz != newData.refreshRateHz;
+     m_data.dpi = newData.dpi;
+     m_data.orientation = newData.orientation;
+     m_data.geometry = newData.geometry;
+     m_data.availableGeometry = newData.availableGeometry;
+     m_data.flags = (m_data.flags & ~QWindowsScreenData::PrimaryScreen)
+             | (newData.flags & QWindowsScreenData::PrimaryScreen);
++    m_data.refreshRateHz = newData.refreshRateHz;
+ 
+     if (dpiChanged) {
+         QWindowSystemInterface::handleScreenLogicalDotsPerInchChange(screen(),
+@@ -573,6 +581,9 @@ void QWindowsScreen::handleChanges(const QWindowsScreenData &newData)
+     }
+     if (primaryChanged)
+         QWindowSystemInterface::handlePrimaryScreenChanged(this);
++
++    if (refreshRateChanged)
++        QWindowSystemInterface::handleScreenRefreshRateChange(screen(), newData.refreshRateHz);
+ }
+ 
+ HMONITOR QWindowsScreen::handle() const
+@@ -698,8 +709,8 @@ void QWindowsScreenManager::initialize()
+ {
+     qCDebug(lcQpaScreen) << "Initializing screen manager";
+ 
+-    auto className = QWindowsContext::instance()->registerWindowClass(
+-        QWindowsContext::classNamePrefix() + QLatin1String("ScreenChangeObserverWindow"),
++    auto className = QWindowsWindowClassRegistry::instance()->registerWindowClass(
++        "ScreenChangeObserverWindow"_L1,
+         qDisplayChangeObserverWndProc);
+ 
+     // HWND_MESSAGE windows do not get WM_DISPLAYCHANGE, so we need to create
+@@ -778,7 +789,7 @@ void QWindowsScreenManager::addScreen(const QWindowsScreenData &screenData)
+     // change here, now that we are processing the WM_DISPLAYCHANGE.
+     const auto allWindows = QGuiApplication::allWindows();
+     for (QWindow *w : allWindows) {
+-        if (w->isVisible() && w->handle() && w->type() != Qt::Desktop) {
++        if (w->isVisible() && w->handle()) {
+             if (QWindowsWindow *window = QWindowsWindow::windowsWindowOf(w))
+                 window->checkForScreenChanged(QWindowsWindow::ScreenChangeMode::FromScreenAdded);
+         }
+@@ -802,7 +813,7 @@ void QWindowsScreenManager::removeScreen(int index)
+         unsigned movedWindowCount = 0;
+         const QWindowList tlws = QGuiApplication::topLevelWindows();
+         for (QWindow *w : tlws) {
+-            if (w->screen() == screen && w->handle() && w->type() != Qt::Desktop) {
++            if (w->screen() == screen && w->handle()) {
+                 if (w->isVisible() && w->windowState() != Qt::WindowMinimized
+                     && (QWindowsWindow::baseWindowOf(w)->exStyle() & WS_EX_TOOLWINDOW)) {
+                     moveToVirtualScreen(w, primaryScreen);
+@@ -870,9 +881,8 @@ const QWindowsScreen *QWindowsScreenManager::screenAtDp(const QPoint &p) const
+     return nullptr;
+ }
+ 
+-const QWindowsScreen *QWindowsScreenManager::screenForHwnd(HWND hwnd) const
++const QWindowsScreen *QWindowsScreenManager::screenForMonitor(HMONITOR hMonitor) const
+ {
+-    HMONITOR hMonitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONULL);
+     if (hMonitor == nullptr)
+         return nullptr;
+     const auto it =
+@@ -885,4 +895,18 @@ const QWindowsScreen *QWindowsScreenManager::screenForHwnd(HWND hwnd) const
+     return it != m_screens.cend() ? *it : nullptr;
+ }
+ 
++const QWindowsScreen *QWindowsScreenManager::screenForHwnd(HWND hwnd) const
++{
++    HMONITOR hMonitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONULL);
++    return screenForMonitor(hMonitor);
++}
++
++const QWindowsScreen *QWindowsScreenManager::screenForRect(const RECT *rect) const
++{
++    if (rect == nullptr)
++        return nullptr;
++    HMONITOR hMonitor = MonitorFromRect(rect, MONITOR_DEFAULTTONULL);
++    return screenForMonitor(hMonitor);
++}
++
+ QT_END_NAMESPACE
+diff --git a/qtbase/src/plugins/platforms/windows/qwindowstheme.cpp b/qtbase/src/plugins/platforms/windows/qwindowstheme.cpp
+index 12ae5be6..0642afad 100644
+--- a/qtbase/src/plugins/platforms/windows/qwindowstheme.cpp
++++ b/qtbase/src/plugins/platforms/windows/qwindowstheme.cpp
+@@ -1,5 +1,6 @@
+ // Copyright (C) 2016 The Qt Company Ltd.
+ // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
++// Qt-Security score:significant reason:default
+ 
+ #include <QtCore/qt_windows.h>
+ 
+@@ -14,6 +15,7 @@
+ #endif
+ #include "qwindowsscreen.h"
+ #include "qwindowswindow.h"
++#include "qwindowswindowclassregistry.h"
+ #include <commctrl.h>
+ #include <objbase.h>
+ #include <commoncontrols.h>
+@@ -39,7 +41,6 @@
+ #include <qpa/qwindowsysteminterface.h>
+ #include <QtGui/private/qabstractfileiconengine_p.h>
+ #include <QtGui/private/qwindowsfontdatabase_p.h>
+-#include <private/qhighdpiscaling_p.h>
+ #include <private/qwinregistry_p.h>
+ #include <QtCore/private/qfunctions_win_p.h>
+ #include <QtGui/private/qwindowsthemecache_p.h>
+@@ -111,8 +112,11 @@ static inline QColor getSysColor(int index)
+     QColor accentDark;
+     QColor accentDarker;
+     QColor accentDarkest;
++
+ #if QT_CONFIG(cpp_winrt)
+-    if (IsWindows10OrGreater()) {
++    // Windows 7/8/8.1: WinRT UISettings is unavailable, fall back to the
++    // Win32 registry path below instead of activating a missing factory.
++    if (IsWindows10OrGreater()) QT_TRY {
+         using namespace winrt::Windows::UI::ViewManagement;
+         const auto settings = UISettings();
+         accent = getSysColor(settings.GetColorValue(UIColorType::Accent));
+@@ -122,8 +126,13 @@ static inline QColor getSysColor(int index)
+         accentDark = getSysColor(settings.GetColorValue(UIColorType::AccentDark1));
+         accentDarker = getSysColor(settings.GetColorValue(UIColorType::AccentDark2));
+         accentDarkest = getSysColor(settings.GetColorValue(UIColorType::AccentDark3));
+-   } else {
+-       accent = []()->QColor {
++    } QT_CATCH(...) {
++        // pass, just fall back to WIN32 API implementation
++    }
++#endif
++
++    if (!accent.isValid()) {
++        accent = []()->QColor {
+             // MS uses the aquatic contrast theme as an example in the URL below:
+             // https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getsyscolor#windows-1011-system-colors
+             if (QWindowsTheme::queryHighContrast())
+@@ -143,44 +152,14 @@ static inline QColor getSysColor(int index)
+         }();
+         if (!accent.isValid())
+             return {};
+-
+         accentLight = accent.lighter(120);
+         accentLighter = accentLight.lighter(120);
+         accentLightest = accentLighter.lighter(120);
+         accentDark = accent.darker(120);
+         accentDarker = accentDark.darker(120);
+         accentDarkest = accentDarker.darker(120);
+-   }
+-#else
+-    accent = []()->QColor {
+-        // MS uses the aquatic contrast theme as an example in the URL below:
+-        // https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getsyscolor#windows-1011-system-colors
+-        if (QWindowsTheme::queryHighContrast())
+-            return getSysColor(COLOR_HIGHLIGHT);
+-        const QWinRegistryKey registry(HKEY_CURRENT_USER, LR"(Software\Microsoft\Windows\DWM)");
+-        if (!registry.isValid())
+-            return {};
+-        const QVariant value = registry.value(L"AccentColor");
+-        if (!value.isValid())
+-            return {};
+-        // The retrieved value is in the #AABBGGRR format, we need to
+-        // convert it to the #AARRGGBB format which Qt expects.
+-        const QColor abgr = QColor::fromRgba(qvariant_cast<DWORD>(value));
+-        if (!abgr.isValid())
+-            return {};
+-        return QColor::fromRgb(abgr.blue(), abgr.green(), abgr.red(), abgr.alpha());
+-
+-    }();
+-    if (!accent.isValid())
+-        return {};
+-
+-    accentLight = accent.lighter(120);
+-    accentLighter = accentLight.lighter(120);
+-    accentLightest = accentLighter.lighter(120);
+-    accentDark = accent.darker(120);
+-    accentDarker = accentDark.darker(120);
+-    accentDarkest = accentDarker.darker(120);
+-#endif
++    }
++
+     switch (level) {
+     case AccentColorDarkest:
+         return accentDarkest;
+@@ -383,46 +362,39 @@ void QWindowsTheme::populateLightSystemBasePalette(QPalette &result)
+ 
+ void QWindowsTheme::populateDarkSystemBasePalette(QPalette &result)
+ {
+-    QColor foreground, background,
+-           accent, accentDark, accentDarker, accentDarkest,
+-           accentLight, accentLighter, accentLightest;
++    QColor foreground;
++    QColor background;
+ #if QT_CONFIG(cpp_winrt)
+-    using namespace winrt::Windows::UI::ViewManagement;
+-    const auto settings = UISettings();
+-
+     // We have to craft a palette from these colors. The settings.UIElementColor(UIElementType) API
+     // returns the old system colors, not the dark mode colors. If the background is black (which it
+     // usually), then override it with a dark gray instead so that we can go up and down the lightness.
+     if (QWindowsTheme::queryColorScheme() == Qt::ColorScheme::Dark) {
+-        // the system is actually running in dark mode, so UISettings will give us dark colors
+-        foreground = getSysColor(settings.GetColorValue(UIColorType::Foreground));
+-        background = [&settings]() -> QColor {
+-            auto systemBackground = getSysColor(settings.GetColorValue(UIColorType::Background));
+-            if (systemBackground == Qt::black)
+-                systemBackground = QColor(0x1E, 0x1E, 0x1E);
+-            return systemBackground;
+-        }();
+-        accent = qt_accentColor(AccentColorNormal);
+-        accentDark = qt_accentColor(AccentColorDark);
+-        accentDarker = qt_accentColor(AccentColorDarker);
+-        accentDarkest = qt_accentColor(AccentColorDarkest);
+-        accentLight = qt_accentColor(AccentColorLight);
+-        accentLighter = qt_accentColor(AccentColorLighter);
+-        accentLightest = qt_accentColor(AccentColorLightest);
+-    } else
++        QT_TRY {
++            using namespace winrt::Windows::UI::ViewManagement;
++            const auto settings = UISettings();
++            // the system is actually running in dark mode, so UISettings will give us dark colors
++            foreground = getSysColor(settings.GetColorValue(UIColorType::Foreground));
++            background = [&settings]() -> QColor {
++                auto systemBackground = getSysColor(settings.GetColorValue(UIColorType::Background));
++                if (systemBackground == Qt::black)
++                    systemBackground = QColor(0x1E, 0x1E, 0x1E);
++                return systemBackground;
++            }();
++        } QT_CATCH(...) {
++            // pass, just fall back to WIN32 API implementation
++        }
++    }
+ #endif
+-    {
++    if (!background.isValid()) {
+         // If the system is running in light mode, then we need to make up our own dark palette
+         foreground = Qt::white;
+         background = QColor(0x1E, 0x1E, 0x1E);
+-        accent = qt_accentColor(AccentColorNormal);
+-        accentDark = accent.darker(120);
+-        accentDarker = accentDark.darker(120);
+-        accentDarkest = accentDarker.darker(120);
+-        accentLight = accent.lighter(120);
+-        accentLighter = accentLight.lighter(120);
+-        accentLightest = accentLighter.lighter(120);
+     }
++
++    const QColor accent = qt_accentColor(AccentColorNormal);
++    const QColor accentDarkest = qt_accentColor(AccentColorDarkest);
++    const QColor accentLighter = qt_accentColor(AccentColorLighter);
++    const QColor accentLightest = qt_accentColor(AccentColorLightest);
+     const QColor linkColor = accentLightest;
+     const QColor buttonColor = background.lighter(200);
+ 
+@@ -582,8 +554,8 @@ QWindowsTheme::QWindowsTheme()
+     refresh();
+     refreshIconPixmapSizes();
+ 
+-    auto className = QWindowsContext::instance()->registerWindowClass(
+-        QWindowsContext::classNamePrefix() + QLatin1String("ThemeChangeObserverWindow"),
++    auto className = QWindowsWindowClassRegistry::instance()->registerWindowClass(
++        "ThemeChangeObserverWindow"_L1,
+         qThemeChangeObserverWndProc);
+     // HWND_MESSAGE windows do not get the required theme events,
+     // so we use a real top-level window that we never show.
+@@ -714,6 +686,10 @@ Qt::ContrastPreference QWindowsTheme::contrastPreference() const
+ 
+ void QWindowsTheme::handleThemeChange()
+ {
++    auto *integration = QWindowsIntegration::instance();
++    if (!integration)
++        return;
++
+     QWindowsThemeCache::clearAllThemeCaches();
+ 
+     const auto oldColorScheme = s_colorScheme;
+@@ -721,7 +697,6 @@ void QWindowsTheme::handleThemeChange()
+     s_colorScheme = effectiveColorScheme();
+     if (s_colorScheme != oldColorScheme) {
+         // Only propagate color scheme changes if the scheme actually changed
+-        auto integration = QWindowsIntegration::instance();
+         integration->updateApplicationBadge();
+ 
+         for (QWindowsWindow *w : std::as_const(QWindowsContext::instance()->windows()))
+diff --git a/qtbase/src/plugins/platforms/windows/qwindowswindow.cpp b/qtbase/src/plugins/platforms/windows/qwindowswindow.cpp
+index bf6840cf..71487256 100644
+--- a/qtbase/src/plugins/platforms/windows/qwindowswindow.cpp
++++ b/qtbase/src/plugins/platforms/windows/qwindowswindow.cpp
+@@ -1,5 +1,6 @@
+ // Copyright (C) 2016 The Qt Company Ltd.
+ // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
++// Qt-Security score:significant reason:default
+ 
+ #include <QtCore/qt_windows.h>
+ #include <QtGui/qstylehints.h>
+@@ -23,6 +24,8 @@
+ #ifdef QT_NO_CURSOR
+ #  include "qwindowscursor.h"
+ #endif
++#include "qwindowswindowclassdescription.h"
++#include "qwindowswindowclassregistry.h"
+ 
+ #include <QtGui/qguiapplication.h>
+ #include <QtGui/qscreen.h>
+@@ -44,7 +47,6 @@
+ #include <QtCore/qoperatingsystemversion.h>
+ 
+ #include <dwmapi.h>
+-#include <gdiplus.h>
+ 
+ #if QT_CONFIG(vulkan)
+ #include "qwindowsvulkaninstance.h"
+@@ -60,6 +62,8 @@
+ 
+ QT_BEGIN_NAMESPACE
+ 
++using namespace Qt::StringLiterals;
++
+ using QWindowCreationContextPtr = QSharedPointer<QWindowCreationContext>;
+ 
+ enum {
+@@ -849,7 +853,7 @@ void WindowCreationData::fromWindow(const QWindow *w, const Qt::WindowFlags flag
+         // make mouse events fall through this window
+         // NOTE: WS_EX_TRANSPARENT flag can make mouse inputs fall through a layered window
+         if (flagsIn & Qt::WindowTransparentForInput)
+-            exStyle |= WS_EX_LAYERED | WS_EX_TRANSPARENT;
++            exStyle |= WS_EX_TRANSPARENT;
+ 
+         // Currently only compatible with D3D surfaces, use it with care.
+         if (qEnvironmentVariableIntValue("QT_QPA_DISABLE_REDIRECTION_SURFACE"))
+@@ -889,8 +893,13 @@ QWindowsWindowData
+ 
+     const auto appinst = reinterpret_cast<HINSTANCE>(GetModuleHandle(nullptr));
+ 
+-    const QString windowClassName = QWindowsContext::instance()->registerWindowClass(w);
+-    const QString windowTitlebarName = QWindowsContext::instance()->registerWindowClass(QStringLiteral("_q_titlebar"), DefWindowProc, CS_VREDRAW|CS_HREDRAW, nullptr, false);
++    const QString windowClassName = QWindowsWindowClassRegistry::instance()->registerWindowClass(w);
++
++    QWindowsWindowClassDescription windowTitlebarDescription;
++    windowTitlebarDescription.name = "_q_titlebar"_L1;
++    windowTitlebarDescription.style = CS_VREDRAW | CS_HREDRAW;
++    windowTitlebarDescription.shouldAddPrefix = false;
++    const QString windowTitlebarName = QWindowsWindowClassRegistry::instance()->registerWindowClass(windowTitlebarDescription);
+ 
+     const QScreen *screen{};
+     const QRect rect = QPlatformWindow::initialGeometry(w, data.geometry,
+@@ -1610,9 +1619,6 @@ QWindowsWindow::QWindowsWindow(QWindow *aWindow, const QWindowsWindowData &data)
+         ShowWindow(m_data.hwndTitlebar, SW_SHOW);
+     }
+ 
+-    const Qt::WindowType type = aWindow->type();
+-    if (type == Qt::Desktop)
+-        return; // No further handling for Qt::Desktop
+     if (aWindow->surfaceType() == QWindow::Direct3DSurface)
+         setFlag(Direct3DSurface);
+ #if QT_CONFIG(opengl)
+@@ -1666,16 +1672,14 @@ void QWindowsWindow::initialize()
+ 
+     // Trigger geometry change (unless it has a special state in which case setWindowState()
+     // will send the message) and screen change signals of QWindow.
+-    if (w->type() != Qt::Desktop) {
+-        const Qt::WindowState state = w->windowState();
+-        const QRect obtainedGeometry(creationContext->obtainedPos, creationContext->obtainedSize);
+-        QPlatformScreen *obtainedScreen = screenForGeometry(obtainedGeometry);
+-        if (obtainedScreen && screen() != obtainedScreen)
+-            QWindowSystemInterface::handleWindowScreenChanged<QWindowSystemInterface::SynchronousDelivery>(w, obtainedScreen->screen());
+-        if (state != Qt::WindowMaximized && state != Qt::WindowFullScreen
+-            && creationContext->requestedGeometryIn != obtainedGeometry) {
+-            QWindowSystemInterface::handleGeometryChange<QWindowSystemInterface::SynchronousDelivery>(w, obtainedGeometry);
+-        }
++    const Qt::WindowState state = w->windowState();
++    const QRect obtainedGeometry(creationContext->obtainedPos, creationContext->obtainedSize);
++    QPlatformScreen *obtainedScreen = screenForGeometry(obtainedGeometry);
++    if (obtainedScreen && screen() != obtainedScreen)
++        QWindowSystemInterface::handleWindowScreenChanged<QWindowSystemInterface::SynchronousDelivery>(w, obtainedScreen->screen());
++    if (state != Qt::WindowMaximized && state != Qt::WindowFullScreen
++        && creationContext->requestedGeometryIn != obtainedGeometry) {
++        QWindowSystemInterface::handleGeometryChange<QWindowSystemInterface::SynchronousDelivery>(w, obtainedGeometry);
+     }
+     if (QWindowsContext::user32dll.getDpiForWindow)
+         QWindowsWindow::setSavedDpi(QWindowsContext::user32dll.getDpiForWindow(handle()));
+@@ -1736,8 +1740,10 @@ void QWindowsWindow::destroyWindow()
+             m_surface = nullptr;
+         }
+ #endif
++        DestroyWindow(m_data.hwndTitlebar);
+         DestroyWindow(m_data.hwnd);
+         context->removeWindow(m_data.hwnd);
++        m_data.hwndTitlebar = nullptr;
+         m_data.hwnd = nullptr;
+     }
+ }
+@@ -1927,10 +1933,15 @@ void QWindowsWindow::updateTransientParent() const
+     // Update transient parent.
+     const HWND oldTransientParent = GetWindow(m_data.hwnd, GW_OWNER);
+     HWND newTransientParent = nullptr;
+-    if (const QWindow *tp = window()->transientParent())
+-        if (const QWindowsWindow *tw = QWindowsWindow::windowsWindowOf(tp))
+-            if (!tw->testFlag(WithinDestroy)) // Prevent destruction by parent window (QTBUG-35499, QTBUG-36666)
++    if (const QWindow *tp = window()->transientParent()) {
++        if (const QWindowsWindow *tw = QWindowsWindow::windowsWindowOf(tp)) {
++            if (!tw->testFlag(WithinDestroy)) { // Prevent destruction by parent window (QTBUG-35499, QTBUG-36666)
+                 newTransientParent = tw->handle();
++            }
++        } else if (const QWindowsBaseWindow *tbw = QWindowsBaseWindow::baseWindowOf(tp)) {
++            newTransientParent = tbw->handle();
++        }
++    }
+ 
+     // QTSOLBUG-71: When using the MFC/winmigrate solution, it is possible that a child
+     // window is found, which can cause issues with modality. Loop up to top level.
+@@ -2070,7 +2081,14 @@ void QWindowsWindow::setParent_sys(const QPlatformWindow *parent)
+         // Force toplevel state as QWindow::isTopLevel cannot be relied upon here.
+         if (wasTopLevel != isTopLevel) {
+             setDropSiteEnabled(false);
+-            setWindowFlags_sys(window()->flags(), unsigned(isTopLevel ? WindowCreationData::ForceTopLevel : WindowCreationData::ForceChild));
++            m_data = setWindowFlags_sys(window()->flags(), unsigned(isTopLevel ? WindowCreationData::ForceTopLevel : WindowCreationData::ForceChild));
++            // Update frame margins for the new top-level state.
++            // Child windows have no frame/titlebar, so margins must be zero.
++            // Top-level windows need frame margins recalculated.
++            if (isTopLevel)
++                updateFullFrameMargins();
++            else
++                m_data.fullFrameMargins = {};
+             updateDropSite(isTopLevel);
+         }
+     }
+@@ -2129,7 +2147,8 @@ void QWindowsWindow::handleDpiChanged(HWND hwnd, WPARAM wParam, LPARAM lParam)
+     QWindowsThemeCache::clearThemeCache(hwnd);
+ 
+     // Send screen change first, so that the new screen is set during any following resize
+-    checkForScreenChanged(QWindowsWindow::FromDpiChange);
++    const auto prcNewWindow = reinterpret_cast<const RECT *>(lParam);
++    checkForScreenChanged(QWindowsWindow::FromDpiChange, !m_inSetgeometry ? prcNewWindow : nullptr);
+ 
+     if (!IsZoomed(hwnd))
+         m_data.restoreGeometry.setSize(m_data.restoreGeometry.size() * scale);
+@@ -2152,7 +2171,6 @@ void QWindowsWindow::handleDpiChanged(HWND hwnd, WPARAM wParam, LPARAM lParam)
+     // making the SetWindowPos() call.
+     if (!m_inSetgeometry) {
+         updateFullFrameMargins();
+-        const auto prcNewWindow = reinterpret_cast<RECT *>(lParam);
+         SetWindowPos(hwnd, nullptr, prcNewWindow->left, prcNewWindow->top,
+                      prcNewWindow->right - prcNewWindow->left,
+                      prcNewWindow->bottom - prcNewWindow->top, SWP_NOZORDER | SWP_NOACTIVATE);
+@@ -2344,6 +2362,7 @@ void QWindowsWindow::handleResized(int wParam, LPARAM lParam)
+         return;
+     case SIZE_MAXIMIZED:
+         handleGeometryChange();
++        updateRestoreGeometry();    // we might be in ResizeMoveActive mode but changed the screen
+         if (!testFlag(WithinSetStyle) && !testFlag(WithinSetGeometry))
+             handleWindowStateChange(Qt::WindowMaximized | (isFullScreen_sys() ? Qt::WindowFullScreen
+                                                                               : Qt::WindowNoState));
+@@ -2367,14 +2386,15 @@ static inline bool equalDpi(const QDpi &d1, const QDpi &d2)
+     return qFuzzyCompare(d1.first, d2.first) && qFuzzyCompare(d1.second, d2.second);
+ }
+ 
+-void QWindowsWindow::checkForScreenChanged(ScreenChangeMode mode)
++void QWindowsWindow::checkForScreenChanged(ScreenChangeMode mode, const RECT *suggestedRect)
+ {
+     if ((parent() && !parent()->isForeignWindow()) || QWindowsScreenManager::isSingleScreen())
+         return;
+ 
+     QPlatformScreen *currentScreen = screen();
+     auto topLevel = isTopLevel_sys() ? m_data.hwnd : GetAncestor(m_data.hwnd, GA_ROOT);
+-    const QWindowsScreen *newScreen =
++    const QWindowsScreen *newScreen = suggestedRect ?
++        QWindowsContext::instance()->screenManager().screenForRect(suggestedRect) :
+         QWindowsContext::instance()->screenManager().screenForHwnd(topLevel);
+ 
+     if (newScreen == nullptr || newScreen == currentScreen)
+@@ -2395,8 +2415,8 @@ void QWindowsWindow::checkForScreenChanged(ScreenChangeMode mode)
+ void QWindowsWindow::handleGeometryChange()
+ {
+     const QRect previousGeometry = m_data.geometry;
+-    m_data.geometry = geometry_sys();
+     updateFullFrameMargins();
++    m_data.geometry = geometry_sys();
+     QWindowSystemInterface::handleGeometryChange(window(), m_data.geometry);
+     // QTBUG-32121: OpenGL/normal windows (with exception of ANGLE
+     // which we no longer support in Qt 6) do not receive expose
+@@ -2935,6 +2955,17 @@ void QWindowsWindow::propagateSizeHints()
+     qCDebug(lcQpaWindow) << __FUNCTION__ << this << window();
+ }
+ 
++static bool isResize(const WINDOWPOS *windowPos)
++{
++    bool result = false;
++    if ((windowPos->flags & SWP_NOSIZE) == 0) {
++        RECT rect;
++        GetWindowRect(windowPos->hwnd, &rect);
++        result = rect.right - rect.left != windowPos->cx || rect.bottom - rect.top != windowPos->cy;
++    }
++    return result;
++}
++
+ bool QWindowsWindow::handleGeometryChangingMessage(MSG *message, const QWindow *qWindow, const QMargins &margins)
+ {
+     auto *windowPos = reinterpret_cast<WINDOWPOS *>(message->lParam);
+@@ -2947,7 +2978,7 @@ bool QWindowsWindow::handleGeometryChangingMessage(MSG *message, const QWindow *
+     // Check the suggestedGeometry against the current one to only discard during
+     // resize, and not a plain move. We also look for SWP_NOSIZE since that, too,
+     // implies an identical size, and comparing QRects wouldn't work with null cx/cy
+-    if (!(windowPos->flags & SWP_NOSIZE) && suggestedGeometry.size() != qWindow->geometry().size())
++    if (isResize(windowPos))
+         windowPos->flags |= SWP_NOCOPYBITS;
+ 
+     if ((windowPos->flags & SWP_NOZORDER) == 0) {
+@@ -3300,6 +3331,7 @@ bool QWindowsWindow::handleNonClientHitTest(const QPoint &globalPos, LRESULT *re
+     const QWindow *w = window();
+     const QPoint localPos = w->mapFromGlobal(QHighDpi::fromNativePixels(globalPos, w));
+     const QRect geom = geometry();
++    static auto oldMouseButtonState = Qt::NoButton;
+ 
+     if (m_data.flags.testFlags(Qt::ExpandedClientAreaHint)) {
+         bool isDefaultTitleBar = !w->flags().testFlag(Qt::CustomizeWindowHint);
+@@ -3308,17 +3340,18 @@ bool QWindowsWindow::handleNonClientHitTest(const QPoint &globalPos, LRESULT *re
+                                                                                                      Qt::WindowMaximizeButtonHint|
+                                                                                                      Qt::WindowCloseButtonHint);
+         const int border = (IsZoomed(m_data.hwnd) || isFullScreen_sys()) ? 0 : getResizeBorderThickness(savedDpi());
++        const int titleBarHeight = getTitleBarHeight_sys(savedDpi());
++        const int titleButtonWidth = titleBarHeight * 1.5;
++        const bool mouseButtonsSwapped = GetSystemMetrics(SM_SWAPBUTTON);
++        auto mouseButtons = Qt::NoButton;
++        if (mouseButtonsSwapped)
++            mouseButtons = GetAsyncKeyState(VK_LBUTTON) != 0 ? Qt::RightButton : (GetAsyncKeyState(VK_RBUTTON) ? Qt::LeftButton : Qt::NoButton);
++        else
++            mouseButtons = GetAsyncKeyState(VK_LBUTTON) != 0 ? Qt::LeftButton : (GetAsyncKeyState(VK_RBUTTON) ? Qt::RightButton : Qt::NoButton);
++
++        *result = HTCLIENT;
+         if (isCustomized || isDefaultTitleBar) {
+-            *result = HTCLIENT;
+-            const int titleBarHeight = getTitleBarHeight_sys(savedDpi());
+-            const int titleButtonWidth = titleBarHeight * 1.5;
+             int buttons = 1;
+-            const bool mouseButtonsSwapped = GetSystemMetrics(SM_SWAPBUTTON);
+-            auto mouseButtons = Qt::NoButton;
+-            if (mouseButtonsSwapped)
+-                mouseButtons = GetAsyncKeyState(VK_LBUTTON) != 0 ? Qt::RightButton : (GetAsyncKeyState(VK_RBUTTON) ? Qt::LeftButton : Qt::NoButton);
+-            else
+-                mouseButtons = GetAsyncKeyState(VK_LBUTTON) != 0 ? Qt::LeftButton : (GetAsyncKeyState(VK_RBUTTON) ? Qt::RightButton : Qt::NoButton);
+ 
+             if (globalPos.y() < geom.top() + titleBarHeight) {
+                 if (m_data.flags.testFlags(Qt::WindowCloseButtonHint) || isDefaultTitleBar) {
+@@ -3346,17 +3379,32 @@ bool QWindowsWindow::handleNonClientHitTest(const QPoint &globalPos, LRESULT *re
+                 } if ((isCustomized || isDefaultTitleBar) &&
+                       *result == HTCLIENT){
+                     QWindow* wnd = window();
+-                    if (mouseButtons != Qt::NoButton) {
+-                        QMouseEvent event(QEvent::MouseButtonPress, localPos, globalPos, mouseButtons, mouseButtons, Qt::NoModifier);
+-                        QGuiApplication::sendEvent(wnd, &event);
+-                        if (!event.isAccepted() && mouseButtons == Qt::RightButton)
++                    if (mouseButtons != oldMouseButtonState) {
++                        auto mouseEventType = mouseButtons == Qt::NoButton ? QEvent::MouseButtonRelease : QEvent::MouseButtonPress;
++                        auto mouseEventButtons = mouseEventType == QEvent::MouseButtonPress ? mouseButtons : oldMouseButtonState;
++                        bool accepted = QWindowSystemInterface::handleMouseEvent<QWindowSystemInterface::SynchronousDelivery>(wnd, QHighDpi::toNativeLocalPosition(localPos, w), globalPos, mouseEventButtons, mouseEventButtons, mouseEventType);
++                        if (!accepted && mouseButtons == Qt::RightButton)
+                             *result = HTSYSMENU;
+-                        else if (!event.isAccepted())
++                        else if (!accepted && globalPos.y() < geom.top() + titleBarHeight)
+                             *result = HTCAPTION;
+                     }
+                 }
+             }
++        } else if (w->flags().testFlag(Qt::CustomizeWindowHint)) {
++
++            QWindow* wnd = window();
++            if (mouseButtons != oldMouseButtonState) {
++                auto mouseEventType = mouseButtons == Qt::NoButton ? QEvent::MouseButtonRelease : QEvent::MouseButtonPress;
++                auto mouseEventButtons = mouseEventType == QEvent::MouseButtonPress ? mouseButtons : oldMouseButtonState;
++                bool accepted = QWindowSystemInterface::handleMouseEvent<QWindowSystemInterface::SynchronousDelivery>(wnd, QHighDpi::toNativeLocalPosition(localPos, w), globalPos, mouseEventButtons, mouseEventButtons, mouseEventType);
++                if (!accepted && mouseButtons == Qt::RightButton)
++                    *result = HTSYSMENU;
++                else if (!accepted && globalPos.y() < geom.top() + titleBarHeight)
++                    *result = HTCAPTION;
++            }
+         }
++        oldMouseButtonState = mouseButtons;
++
+         if (border != 0) {
+             const bool left   = (globalPos.x() >= geom.left()) && (globalPos.x() < geom.left() + border);
+             const bool right  = (globalPos.x() >  geom.right() - border) && (globalPos.x() <= geom.right());
+@@ -3991,22 +4039,40 @@ QString QWindowsWindow::formatWindowTitle(const QString &title)
+ 
+ void QWindowsWindow::requestUpdate()
+ {
++    enum UpdateState {
++        Ready = 0,
++        Requested = 1,
++        Posted = 2
++    };
+     QWindow *w = window();
+     QDxgiVSyncService *vs = QDxgiVSyncService::instance();
+     if (vs->supportsWindow(w)) {
+         if (m_vsyncServiceCallbackId == 0) {
+             m_vsyncServiceCallbackId = vs->registerCallback([this, w](const QDxgiVSyncService::CallbackWindowList &windowList, qint64) {
+                 if (windowList.contains(w)) {
+-                    if (m_vsyncUpdatePending.testAndSetAcquire(1, 0)) {
+-                        QMetaObject::invokeMethod(w, [this, w] {
+-                            if (w->handle() == this)
+-                                deliverUpdateRequest();
++                    // Make sure we only post one event at a time. If the state
++                    // isn't Requested, it means there either isn't a pending
++                    // request or we are waiting for the event loop to process
++                    // the Posted event on the GUI thread.
++                    if (m_vsyncUpdatePending.testAndSetAcquire(UpdateState::Requested, UpdateState::Posted)) {
++                        QWindowsWindow *oldSelf = this;
++                        qsizetype oldCallbackId = m_vsyncServiceCallbackId;
++                        QMetaObject::invokeMethod(w, [w, oldSelf, oldCallbackId] {
++                            // 'oldSelf' is only used for comparison, don't access it directly!
++                            auto *self = static_cast<QWindowsWindow *>(w->handle());
++                            // NOTE: In the off chance that the window got destroyed and recreated with the
++                            //       same address, we also check that the callback id is the same.
++                            if (self && self == oldSelf && self->m_vsyncServiceCallbackId == oldCallbackId) {
++                                // The platform window is still alive
++                                self->m_vsyncUpdatePending.storeRelease(UpdateState::Ready);
++                                self->deliverUpdateRequest();
++                            }
+                         });
+                     }
+                 }
+             });
+         }
+-        m_vsyncUpdatePending.storeRelease(1);
++        m_vsyncUpdatePending.testAndSetRelease(UpdateState::Ready, UpdateState::Requested);
+     } else {
+         QPlatformWindow::requestUpdate();
+     }
+diff --git a/qtbase/src/plugins/platforms/windows/uiautomation/qwindowsuiaaccessibility.cpp b/qtbase/src/plugins/platforms/windows/uiautomation/qwindowsuiaaccessibility.cpp
+index cc3f66d8..760aff1b 100644
+--- a/qtbase/src/plugins/platforms/windows/uiautomation/qwindowsuiaaccessibility.cpp
++++ b/qtbase/src/plugins/platforms/windows/uiautomation/qwindowsuiaaccessibility.cpp
+@@ -1,5 +1,6 @@
+ // Copyright (C) 2017 The Qt Company Ltd.
+ // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
++// Qt-Security score:significant reason:default
+ 
+ #include <QtGui/qtguiglobal.h>
+ #if QT_CONFIG(accessibility)
+@@ -22,7 +23,7 @@
+ QT_BEGIN_NAMESPACE
+ 
+ using namespace QWindowsUiAutomation;
+-using namespace Qt::Literals::StringLiterals;
++using namespace Qt::StringLiterals;
+ 
+ bool QWindowsUiaAccessibility::m_accessibleActive = false;
+ 
+@@ -147,6 +148,9 @@ void QWindowsUiaAccessibility::notifyAccessibilityUpdate(QAccessibleEvent *event
+     case QAccessible::NameChanged:
+         QWindowsUiaMainProvider::notifyNameChange(event);
+         break;
++    case QAccessible::RoleChanged:
++        QWindowsUiaMainProvider::notifyRoleChange(event);
++        break;
+     case QAccessible::SelectionAdd:
+         QWindowsUiaMainProvider::notifySelectionChange(event);
+         break;
+diff --git a/qtbase/src/plugins/platforms/windows/uiautomation/qwindowsuiamainprovider.cpp b/qtbase/src/plugins/platforms/windows/uiautomation/qwindowsuiamainprovider.cpp
+index 89b9c348..a6b452b1 100644
+--- a/qtbase/src/plugins/platforms/windows/uiautomation/qwindowsuiamainprovider.cpp
++++ b/qtbase/src/plugins/platforms/windows/uiautomation/qwindowsuiamainprovider.cpp
+@@ -1,5 +1,6 @@
+ // Copyright (C) 2017 The Qt Company Ltd.
+ // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
++// Qt-Security score:significant reason:default
+ 
+ #include <QtGui/qtguiglobal.h>
+ #if QT_CONFIG(accessibility)
+@@ -28,7 +29,6 @@
+ #include <QtGui/qaccessible.h>
+ #include <QtGui/qguiapplication.h>
+ #include <QtGui/qwindow.h>
+-#include <qpa/qplatforminputcontextfactory_p.h>
+ #include <QtCore/private/qcomvariant_p.h>
+ 
+ #if !defined(Q_CC_BOR) && !defined (Q_CC_GNU)
+@@ -84,8 +84,12 @@ void QWindowsUiaMainProvider::notifyStateChange(QAccessibleStateChangeEvent *eve
+ {
+     if (QAccessibleInterface *accessible = event->accessibleInterface()) {
+         if (event->changedStates().checked || event->changedStates().checkStateMixed) {
+-           // Notifies states changes in checkboxes.
+-           if (accessible->role() == QAccessible::CheckBox) {
++            // Notifies states changes in checkboxes, switches, and checkable item view items.
++            if (accessible->role() == QAccessible::CheckBox
++                || accessible->role() == QAccessible::Switch
++                || accessible->role() == QAccessible::Cell
++                || accessible->role() == QAccessible::ListItem
++                || accessible->role() == QAccessible::TreeItem) {
+                 if (auto provider = providerForAccessible(accessible)) {
+                     long toggleState = ToggleState_Off;
+                     if (accessible->state().checked)
+@@ -174,6 +178,18 @@ void QWindowsUiaMainProvider::notifyNameChange(QAccessibleEvent *event)
+     }
+ }
+ 
++void QWindowsUiaMainProvider::notifyRoleChange(QAccessibleEvent *event)
++{
++    if (QAccessibleInterface *accessible = event->accessibleInterface()) {
++        if (auto provider = providerForAccessible(accessible)) {
++            QComVariant oldVal;
++            QComVariant newVal{ roleToControlTypeId(accessible->role()) };
++            UiaRaiseAutomationPropertyChangedEvent(provider.Get(), UIA_ControlTypePropertyId,
++                                                   oldVal.get(), newVal.get());
++        }
++    }
++}
++
+ void QWindowsUiaMainProvider::notifySelectionChange(QAccessibleEvent *event)
+ {
+     if (QAccessibleInterface *accessible = event->accessibleInterface()) {
+@@ -575,31 +591,24 @@ HRESULT QWindowsUiaMainProvider::GetPropertyValue(PROPERTYID idProp, VARIANT *pR
+             *pRetVal = QComVariant{ UIA_WindowControlTypeId }.release();
+         } else {
+             // Control type converted from role.
+-            auto controlType = roleToControlTypeId(accessible->role());
+-
+-            // The native OSK should be disabled if the Qt OSK is in use,
+-            // or if disabled via application attribute.
+-            static bool imModuleEmpty = QPlatformInputContextFactory::requested().isEmpty();
+-            bool nativeVKDisabled = QCoreApplication::testAttribute(Qt::AA_DisableNativeVirtualKeyboard);
+-
+-            // If we want to disable the native OSK auto-showing
+-            // we have to report text fields as non-editable.
+-            if (controlType == UIA_EditControlTypeId && (!imModuleEmpty || nativeVKDisabled))
+-                controlType = UIA_TextControlTypeId;
+-
+-            *pRetVal = QComVariant{ controlType }.release();
++            *pRetVal = QComVariant{ roleToControlTypeId(accessible->role()) }.release();
+         }
+         break;
+     case UIA_HelpTextPropertyId:
+         *pRetVal = QComVariant{ accessible->text(QAccessible::Help) }.release();
+         break;
+     case UIA_HasKeyboardFocusPropertyId:
++        // If the top-level window has no focused child, report the top-level
++        // widget (window). If it already has a focused widget, it will be
++        // reported automatically.
+         if (topLevelWindow) {
+-            // Windows set the active state to true when they are focused
+-            *pRetVal = QComVariant{ accessible->state().active ? true : false }.release();
+-        } else {
+-            *pRetVal = QComVariant{ accessible->state().focused ? true : false }.release();
++            QAccessibleInterface *focusacc = accessible->focusChild();
++            if (!focusacc) {
++                *pRetVal = QComVariant{ accessible->state().active ? true : false }.release();
++                break;
++            }
+         }
++        *pRetVal = QComVariant{ accessible->state().focused ? true : false }.release();
+         break;
+     case UIA_IsKeyboardFocusablePropertyId:
+         if (topLevelWindow) {
+@@ -655,6 +664,21 @@ HRESULT QWindowsUiaMainProvider::GetPropertyValue(PROPERTYID idProp, VARIANT *pR
+         *pRetVal = QComVariant{ name }.release();
+         break;
+     }
++    case UIA_OrientationPropertyId: {
++        OrientationType orientationType = OrientationType_None;
++        if (QAccessibleAttributesInterface *attributesIface = accessible->attributesInterface()) {
++            const QVariant orientationVariant =
++                    attributesIface->attributeValue(QAccessible::Attribute::Orientation);
++            if (orientationVariant.isValid()) {
++                Q_ASSERT(orientationVariant.canConvert<Qt::Orientation>());
++                const Qt::Orientation orientation = orientationVariant.value<Qt::Orientation>();
++                orientationType = orientation == Qt::Horizontal ? OrientationType_Horizontal
++                                                                : OrientationType_Vertical;
++            }
++        }
++        *pRetVal = QComVariant{ long(orientationType) }.release();
++        break;
++    }
+     case UIA_StyleIdAttributeId:
+         setStyle(accessible, pRetVal);
+         break;
+diff --git a/qtbase/src/plugins/styles/modernwindows/qwindowsvistastyle.cpp b/qtbase/src/plugins/styles/modernwindows/qwindowsvistastyle.cpp
+index b19b35ea..e1b9f44e 100644
+--- a/qtbase/src/plugins/styles/modernwindows/qwindowsvistastyle.cpp
++++ b/qtbase/src/plugins/styles/modernwindows/qwindowsvistastyle.cpp
+@@ -1,5 +1,6 @@
+ // Copyright (C) 2016 The Qt Company Ltd.
+ // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
++// Qt-Security score:significant reason:default
+ 
+ #include "qwindowsvistastyle_p.h"
+ #include "qwindowsvistastyle_p_p.h"
+@@ -15,6 +16,9 @@
+ #include <private/qapplication_p.h>
+ #include <private/qsystemlibrary_p.h>
+ #include <private/qwindowsthemecache_p.h>
++#if QT_CONFIG(tooltip)
++#include "private/qtooltip_p.h"
++#endif
+ 
+ #include "qdrawutil.h" // for now
+ #include <qbackingstore.h>
+@@ -76,10 +80,6 @@ static void qt_add_rect(HRGN &winRegion, QRect r)
+ static HRGN qt_hrgn_from_qregion(const QRegion &region)
+ {
+     HRGN hRegion = CreateRectRgn(0,0,0,0);
+-    if (region.rectCount() == 1) {
+-        qt_add_rect(hRegion, region.boundingRect());
+-        return hRegion;
+-    }
+     for (const QRect &rect : region)
+         qt_add_rect(hRegion, rect);
+     return hRegion;
+@@ -378,7 +378,7 @@ HWND QWindowsVistaStylePrivate::winId(const QWidget *widget)
+     // Find top level with native window (there might be dialogs that do not have one).
+     const auto allWindows = QGuiApplication::allWindows();
+     for (const QWindow *window : allWindows) {
+-        if (window->isTopLevel() && window->type() != Qt::Desktop && window->handle() != nullptr)
++        if (window->isTopLevel() && window->handle() != nullptr)
+             return reinterpret_cast<HWND>(window->winId());
+     }
+ 
+@@ -1291,6 +1291,9 @@ QWindowsVistaStyle::QWindowsVistaStyle() : QWindowsVistaStyle(*new QWindowsVista
+ */
+ QWindowsVistaStyle::QWindowsVistaStyle(QWindowsVistaStylePrivate &dd) : QWindowsStyle(dd)
+ {
++    Q_D(QWindowsVistaStyle);
++    d->assetFont = QFont("Segoe MDL2 Assets"_L1);
++    d->assetFont.setStyleStrategy(QFont::NoFontMerging);
+ }
+ 
+ /*!
+@@ -1622,6 +1625,12 @@ void QWindowsVistaStyle::drawPrimitive(PrimitiveElement element, const QStyleOpt
+         break;
+ 
+     case PE_Frame:
++        if (widget && widget->inherits("QComboBoxPrivateContainer")){
++            QStyleOption copy = *option;
++            copy.state |= State_Raised;
++            proxy()->drawPrimitive(PE_PanelMenu, &copy, painter, widget);
++            break;
++        }
+ #if QT_CONFIG(accessibility)
+         if (QStyleHelper::isInstanceOf(option->styleObject, QAccessible::EditableText)
+              || QStyleHelper::isInstanceOf(option->styleObject, QAccessible::StaticText) ||
+@@ -1700,6 +1709,16 @@ void QWindowsVistaStyle::drawPrimitive(PrimitiveElement element, const QStyleOpt
+         return;
+     }
+ 
++    case PE_PanelMenu:
++        if (widget && widget->inherits("QComboBoxPrivateContainer")){
++            //fill combobox popup background
++            QWindowsThemeData popupbackgroundTheme(widget, painter, QWindowsVistaStylePrivate::MenuTheme,
++                             MENU_POPUPBACKGROUND, stateId, option->rect);
++            d->drawBackground(popupbackgroundTheme);
++            return;
++        }
++        break;
++
+     case PE_PanelMenuBar:
+         break;
+ 
+@@ -2294,6 +2313,14 @@ int QWindowsVistaStyle::styleHint(StyleHint hint, const QStyleOption *option, co
+         ret = 1;
+         break;
+ 
++    case SH_ComboBox_ListMouseTracking_Current:
++        ret = 0;
++        break;
++
++    case SH_ComboBox_ListMouseTracking_Active:
++        ret = 1;
++        break;
++
+     default:
+         ret = QWindowsStyle::styleHint(hint, option, widget, returnData);
+         break;
+@@ -2438,48 +2465,8 @@ void QWindowsVistaStyle::drawControl(ControlElement element, const QStyleOption
+                 stateId = PBS_NORMAL;
+ 
+             if (!justFlat) {
+-
+-                if (d->transitionsEnabled() && (btn->features & QStyleOptionButton::DefaultButton) &&
+-                        !(state & (State_Sunken | State_On)) && !(state & State_MouseOver) &&
+-                        (state & State_Enabled) && (state & State_Active))
+-                {
+-                    QWindowsVistaAnimation *anim = qobject_cast<QWindowsVistaAnimation *>(d->animation(styleObject(option)));
+-
+-                    if (!anim) {
+-                        QImage startImage = createAnimationBuffer(option, widget);
+-                        QImage alternateImage = createAnimationBuffer(option, widget);
+-
+-                        QWindowsVistaPulse *pulse = new QWindowsVistaPulse(styleObject(option));
+-
+-                        QPainter startPainter(&startImage);
+-                        stateId = PBS_DEFAULTED;
+-                        QWindowsThemeData theme(widget, &startPainter, themeNumber, partId, stateId, rect);
+-                        d->drawBackground(theme);
+-
+-                        QPainter alternatePainter(&alternateImage);
+-                        theme.stateId = PBS_DEFAULTED_ANIMATING;
+-                        theme.painter = &alternatePainter;
+-                        d->drawBackground(theme);
+-
+-                        pulse->setStartImage(startImage);
+-                        pulse->setEndImage(alternateImage);
+-                        pulse->setStartTime(d->animationTime());
+-                        pulse->setDuration(2000);
+-                        d->startAnimation(pulse);
+-                        anim = pulse;
+-                    }
+-
+-                    if (anim)
+-                        anim->paint(painter, option);
+-                    else {
+-                        QWindowsThemeData theme(widget, painter, themeNumber, partId, stateId, rect);
+-                        d->drawBackground(theme);
+-                    }
+-                }
+-                else {
+-                    QWindowsThemeData theme(widget, painter, themeNumber, partId, stateId, rect);
+-                    d->drawBackground(theme);
+-                }
++                QWindowsThemeData theme(widget, painter, themeNumber, partId, stateId, rect);
++                d->drawBackground(theme);
+             }
+ 
+             if (btn->features & QStyleOptionButton::HasMenu) {
+@@ -2939,7 +2926,7 @@ void QWindowsVistaStyle::drawControl(ControlElement element, const QStyleOption
+                 const auto size = proxy()->pixelMetric(PM_SmallIconSize, option, widget);
+                 QRect pmr(QPoint(0, 0), QSize(size, size));
+                 pmr.moveCenter(vCheckRect.center());
+-                menuitem->icon.paint(painter, vCheckRect, Qt::AlignCenter, mode,
++                menuitem->icon.paint(painter, pmr, Qt::AlignCenter, mode,
+                                      checked ? QIcon::On : QIcon::Off);
+             }
+ 
+@@ -3987,7 +3974,7 @@ void QWindowsVistaStyle::drawComplexControl(ComplexControl control, const QStyle
+                 d->drawBackground(ftheme);
+             }
+             if (sub & SC_SpinBoxUp) {
+-                theme.rect = proxy()->subControlRect(CC_SpinBox, option, SC_SpinBoxUp, widget).adjusted(0, 0, 0, 1);
++                theme.rect = proxy()->subControlRect(CC_SpinBox, option, SC_SpinBoxUp, widget);
+                 partId = SPNP_UP;
+                 if (!(sb->stepEnabled & QAbstractSpinBox::StepUpEnabled) || !(flags & State_Enabled))
+                     stateId = UPS_DISABLED;
+@@ -4664,7 +4651,7 @@ void QWindowsVistaStyle::polish(QWidget *widget)
+                 widget->setPalette(pal);
+         } else
+ #endif // QT_CONFIG(commandlinkbutton)
+-        if (widget->inherits("QTipLabel")) {
++        if (qobject_cast<const QTipLabel *>(widget)) {
+             //note that since tooltips are not reused
+             //we do not have to care about unpolishing
+             widget->setContentsMargins(3, 0, 4, 0);
+@@ -4845,6 +4832,11 @@ void QWindowsVistaStyle::polish(QApplication *app)
+     QWindowsStyle::polish(app);
+ }
+ 
++void QWindowsVistaStyle::unpolish(QApplication *app)
++{
++    QWindowsStyle::unpolish(app);
++}
++
+ /*!
+  \internal
+  */
+@@ -4856,18 +4848,17 @@ QPixmap QWindowsVistaStyle::standardPixmap(StandardPixmap standardPixmap, const
+     }
+ 
+     switch (standardPixmap) {
++    case SP_TitleBarMinButton:
+     case SP_TitleBarMaxButton:
+     case SP_TitleBarCloseButton:
+-        if (qstyleoption_cast<const QStyleOptionDockWidget *>(option)) {
+-            if (widget && widget->isWindow()) {
+-                QWindowsThemeData theme(widget, nullptr, QWindowsVistaStylePrivate::WindowTheme, WP_SMALLCLOSEBUTTON, CBS_NORMAL);
+-                if (theme.isValid()) {
+-                    const QSize size = (theme.size() * QWindowsStylePrivate::nativeMetricScaleFactor(widget)).toSize();
+-                    return QIcon(QWindowsStyle::standardPixmap(standardPixmap, option, widget)).pixmap(size);
+-                }
+-            }
++    case SP_TitleBarNormalButton: {
++        QWindowsThemeData theme(widget, nullptr, QWindowsVistaStylePrivate::WindowTheme, WP_SMALLCLOSEBUTTON, CBS_NORMAL);
++        if (theme.isValid()) {
++            const QSize size = (theme.size() * QWindowsStylePrivate::nativeMetricScaleFactor(widget)).toSize();
++            return standardIcon(standardPixmap, option, widget).pixmap(size);
+         }
+         break;
++    }
+ 
+     default:
+         break;
+@@ -4890,109 +4881,25 @@ QIcon QWindowsVistaStyle::standardIcon(StandardPixmap standardIcon,
+     auto *d = const_cast<QWindowsVistaStylePrivate*>(d_func());
+ 
+     switch (standardIcon) {
++    case SP_TitleBarMinButton:
++        if (d->m_titleBarMinIcon.isNull())
++            d->m_titleBarMinIcon = QIcon(new WinFontIconEngine(QChar(0xE921), d->assetFont));
++        return d->m_titleBarMinIcon;
++
+     case SP_TitleBarMaxButton:
+-        if (qstyleoption_cast<const QStyleOptionDockWidget *>(option)) {
+-            if (d->m_titleBarMaxIcon.isNull()) {
+-                QWindowsThemeData themeSize(nullptr, nullptr, QWindowsVistaStylePrivate::WindowTheme,
+-                                    WP_SMALLCLOSEBUTTON, CBS_NORMAL);
+-                QWindowsThemeData theme(nullptr, nullptr, QWindowsVistaStylePrivate::WindowTheme,
+-                                WP_MAXBUTTON, MAXBS_NORMAL);
+-                if (theme.isValid()) {
+-                    const QSize size = (themeSize.size() * QWindowsStylePrivate::nativeMetricScaleFactor(widget)).toSize();
+-                    QPixmap pm(size);
+-                    pm.fill(Qt::transparent);
+-                    QPainter p(&pm);
+-                    theme.painter = &p;
+-                    theme.rect = QRect(QPoint(0, 0), size);
+-                    d->drawBackground(theme);
+-                    d->m_titleBarMaxIcon.addPixmap(pm, QIcon::Normal, QIcon::Off);    // Normal
+-                    pm.fill(Qt::transparent);
+-                    theme.stateId = MAXBS_PUSHED;
+-                    d->drawBackground(theme);
+-                    d->m_titleBarMaxIcon.addPixmap(pm, QIcon::Normal, QIcon::On);     // Pressed
+-                    pm.fill(Qt::transparent);
+-                    theme.stateId = MAXBS_HOT;
+-                    d->drawBackground(theme);
+-                    d->m_titleBarMaxIcon.addPixmap(pm, QIcon::Active, QIcon::Off);    // Hover
+-                    pm.fill(Qt::transparent);
+-                    theme.stateId = MAXBS_INACTIVE;
+-                    d->drawBackground(theme);
+-                    d->m_titleBarMaxIcon.addPixmap(pm, QIcon::Disabled, QIcon::Off);  // Disabled
+-                }
+-            }
+-            if (widget && widget->isWindow())
+-                return d->m_titleBarMaxIcon;
+-        }
+-        break;
++        if (d->m_titleBarMaxIcon.isNull())
++            d->m_titleBarMaxIcon = QIcon(new WinFontIconEngine(QChar(0xE922), d->assetFont));
++        return d->m_titleBarMaxIcon;
+ 
+     case SP_TitleBarCloseButton:
+-        if (qstyleoption_cast<const QStyleOptionDockWidget *>(option)) {
+-            if (d->m_titleBarCloseIcon.isNull()) {
+-                QWindowsThemeData theme(nullptr, nullptr, QWindowsVistaStylePrivate::WindowTheme,
+-                                WP_SMALLCLOSEBUTTON, CBS_NORMAL);
+-                if (theme.isValid()) {
+-                    const QSize size = (theme.size() * QWindowsStylePrivate::nativeMetricScaleFactor(widget)).toSize();
+-                    QPixmap pm(size);
+-                    pm.fill(Qt::transparent);
+-                    QPainter p(&pm);
+-                    theme.painter = &p;
+-                    theme.partId = WP_CLOSEBUTTON; // ####
+-                    theme.rect = QRect(QPoint(0, 0), size);
+-                    d->drawBackground(theme);
+-                    d->m_titleBarCloseIcon.addPixmap(pm, QIcon::Normal, QIcon::Off);    // Normal
+-                    pm.fill(Qt::transparent);
+-                    theme.stateId = CBS_PUSHED;
+-                    d->drawBackground(theme);
+-                    d->m_titleBarCloseIcon.addPixmap(pm, QIcon::Normal, QIcon::On);     // Pressed
+-                    pm.fill(Qt::transparent);
+-                    theme.stateId = CBS_HOT;
+-                    d->drawBackground(theme);
+-                    d->m_titleBarCloseIcon.addPixmap(pm, QIcon::Active, QIcon::Off);    // Hover
+-                    pm.fill(Qt::transparent);
+-                    theme.stateId = CBS_INACTIVE;
+-                    d->drawBackground(theme);
+-                    d->m_titleBarCloseIcon.addPixmap(pm, QIcon::Disabled, QIcon::Off);  // Disabled
+-                }
+-            }
+-            if (widget && widget->isWindow())
+-                return d->m_titleBarCloseIcon;
+-        }
+-        break;
++        if (d->m_titleBarCloseIcon.isNull())
++            d->m_titleBarCloseIcon = QIcon(new WinFontIconEngine(QChar(0xE8BB), d->assetFont));
++        return d->m_titleBarCloseIcon;
+ 
+     case SP_TitleBarNormalButton:
+-        if (qstyleoption_cast<const QStyleOptionDockWidget *>(option)) {
+-            if (d->m_titleBarNormalIcon.isNull()) {
+-                QWindowsThemeData themeSize(nullptr, nullptr, QWindowsVistaStylePrivate::WindowTheme,
+-                                    WP_SMALLCLOSEBUTTON, CBS_NORMAL);
+-                QWindowsThemeData theme(nullptr, nullptr, QWindowsVistaStylePrivate::WindowTheme,
+-                                WP_RESTOREBUTTON, RBS_NORMAL);
+-                if (theme.isValid()) {
+-                    const QSize size = (themeSize.size() * QWindowsStylePrivate::nativeMetricScaleFactor(widget)).toSize();
+-                    QPixmap pm(size);
+-                    pm.fill(Qt::transparent);
+-                    QPainter p(&pm);
+-                    theme.painter = &p;
+-                    theme.rect = QRect(QPoint(0, 0), size);
+-                    d->drawBackground(theme);
+-                    d->m_titleBarNormalIcon.addPixmap(pm, QIcon::Normal, QIcon::Off);    // Normal
+-                    pm.fill(Qt::transparent);
+-                    theme.stateId = RBS_PUSHED;
+-                    d->drawBackground(theme);
+-                    d->m_titleBarNormalIcon.addPixmap(pm, QIcon::Normal, QIcon::On);     // Pressed
+-                    pm.fill(Qt::transparent);
+-                    theme.stateId = RBS_HOT;
+-                    d->drawBackground(theme);
+-                    d->m_titleBarNormalIcon.addPixmap(pm, QIcon::Active, QIcon::Off);    // Hover
+-                    pm.fill(Qt::transparent);
+-                    theme.stateId = RBS_INACTIVE;
+-                    d->drawBackground(theme);
+-                    d->m_titleBarNormalIcon.addPixmap(pm, QIcon::Disabled, QIcon::Off);  // Disabled
+-                }
+-            }
+-            if (widget && widget->isWindow())
+-                return d->m_titleBarNormalIcon;
+-        }
+-        break;
++        if (d->m_titleBarNormalIcon.isNull())
++            d->m_titleBarNormalIcon = QIcon(new WinFontIconEngine(QChar(0xE923), d->assetFont));
++        return d->m_titleBarNormalIcon;
+ 
+     case SP_CommandLink: {
+         QWindowsThemeData theme(nullptr, nullptr, QWindowsVistaStylePrivate::ButtonTheme,
+@@ -5034,4 +4941,65 @@ QIcon QWindowsVistaStyle::standardIcon(StandardPixmap standardIcon,
+     return QWindowsStyle::standardIcon(standardIcon, option, widget);
+ }
+ 
++WinFontIconEngine::WinFontIconEngine(const QString &glyph, const QFont &font)
++    : QFontIconEngine({}, font)
++    , m_font(font)
++    , m_glyph(glyph)
++{
++}
++
++QString WinFontIconEngine::key() const
++{
++    return "WinFontIconEngine"_L1;
++}
++
++QIconEngine *WinFontIconEngine::clone() const
++{
++    return new WinFontIconEngine(*this);
++}
++
++QString WinFontIconEngine::string() const
++{
++    return m_glyph;
++}
++
++void WinFontIconEngine::setScale(double scale)
++{
++    m_scale = scale;
++}
++
++void WinFontIconEngine::paint(QPainter *painter, const QRect &rect, QIcon::Mode mode,
++                              QIcon::State)
++{
++    // we can't use QFontIconEngine because
++    //  - the text is drawn too large
++    //  - the palette from the widget is not used
++    const QPaintDevice *paintDevice = painter->device();
++    const bool isWidget = paintDevice->devType() == QInternal::Widget;
++    const auto palette = isWidget ? static_cast<const QWidget *>(paintDevice)->palette()
++                                  : qApp->palette();
++    QColor color = Qt::black;
++    switch (mode) {
++    case QIcon::Active:
++        color = palette.color(QPalette::Active, QPalette::Text);
++        break;
++    case QIcon::Normal:
++        color = palette.color(QPalette::Active, QPalette::Text);
++        break;
++    case QIcon::Disabled:
++        color = palette.color(QPalette::Disabled, QPalette::Text);
++        break;
++    case QIcon::Selected:
++        color = palette.color(QPalette::Active, QPalette::HighlightedText);
++        break;
++    }
++    QFont renderFont(m_font);
++    renderFont.setPixelSize(rect.height() * m_scale);
++    painter->save();
++    painter->setFont(renderFont);
++    painter->setPen(color);
++    painter->drawText(rect, Qt::AlignCenter, m_glyph);
++    painter->restore();
++}
++
+ QT_END_NAMESPACE
+diff --git a/qtbase/src/plugins/styles/modernwindows/qwindowsvistastyle_p_p.h b/qtbase/src/plugins/styles/modernwindows/qwindowsvistastyle_p_p.h
+index d0b9c426..85790560 100644
+--- a/qtbase/src/plugins/styles/modernwindows/qwindowsvistastyle_p_p.h
++++ b/qtbase/src/plugins/styles/modernwindows/qwindowsvistastyle_p_p.h
+@@ -1,5 +1,6 @@
+ // Copyright (C) 2016 The Qt Company Ltd.
+ // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
++// Qt-Security score:significant reason:default
+ 
+ #ifndef QWINDOWSVISTASTYLE_P_P_H
+ #define QWINDOWSVISTASTYLE_P_P_H
+@@ -18,6 +19,7 @@
+ #include <QtWidgets/private/qtwidgetsglobal_p.h>
+ #include "qwindowsvistastyle_p.h"
+ #include "qwindowsthemedata_p.h"
++#include <private/qfonticonengine_p.h>
+ #include <private/qpaintengine_raster_p.h>
+ #include <qpaintengine.h>
+ #include <qwidget.h>
+@@ -156,6 +158,10 @@ public:
+     bool transitionsEnabled() const;
+ 
+ protected:
++    QFont assetFont;
++
++private:
++    QIcon m_titleBarMinIcon;
+     QIcon m_titleBarMaxIcon;
+     QIcon m_titleBarCloseIcon;
+     QIcon m_titleBarNormalIcon;
+@@ -178,6 +184,23 @@ private:
+     static QVarLengthFlatMap<const QScreen *, HWND, 4> m_vistaTreeViewHelpers;
+ };
+ 
++class WinFontIconEngine : public QFontIconEngine
++{
++public:
++    WinFontIconEngine(const QString &glyph, const QFont &font);
++
++    QString key() const override;
++    QIconEngine *clone() const override;
++    QString string() const override;
++    void setScale(double scale);
++    void paint(QPainter *painter, const QRect &rect, QIcon::Mode mode, QIcon::State state) override;
++
++protected:
++    QFont m_font;
++    QString m_glyph;
++    double m_scale = 0.7;
++};
++
+ QT_END_NAMESPACE
+ 
+ #endif // QWINDOWSVISTASTYLE_P_P_H
+diff --git a/qtbase/src/widgets/styles/qwindowsstyle.cpp b/qtbase/src/widgets/styles/qwindowsstyle.cpp
+index af53d4e2..517f9533 100644
+--- a/qtbase/src/widgets/styles/qwindowsstyle.cpp
++++ b/qtbase/src/widgets/styles/qwindowsstyle.cpp
+@@ -1,5 +1,6 @@
+ // Copyright (C) 2016 The Qt Company Ltd.
+ // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
++// Qt-Security score:significant reason:default
+ 
+ #include "qwindowsstyle_p.h"
+ #include "qwindowsstyle_p_p.h"
+@@ -19,6 +20,7 @@
+ #endif
+ #include "qpaintengine.h"
+ #include "qpainter.h"
++#include "qpainterstateguard.h"
+ #if QT_CONFIG(rubberband)
+ #include "qrubberband.h"
+ #endif
+@@ -118,8 +120,7 @@ bool QWindowsStyle::eventFilter(QObject *o, QEvent *e)
+             // Alt has been pressed - find all widgets that care
+             const QList<QWidget *> children = widget->findChildren<QWidget *>();
+             auto ignorable = [](QWidget *w) {
+-                return w->isWindow() || !w->isVisible()
+-                        || w->style()->styleHint(SH_UnderlineShortcut, nullptr, w);
++                return w->isWindow() || !w->isVisible();
+             };
+             // Update states before repainting
+             d->seenAlt.append(widget);
+@@ -166,7 +167,7 @@ bool QWindowsStyle::eventFilter(QObject *o, QEvent *e)
+ 
+     This style is Qt's default GUI style on Windows.
+ 
+-    \image qwindowsstyle.png
++    \image qwindowsstyle.png {Gallery of widgets using the default GUI style}
+     \sa QWindowsVistaStyle, QMacStyle, QFusionStyle
+ */
+ 
+@@ -483,7 +484,7 @@ int QWindowsStyle::styleHint(StyleHint hint, const QStyleOption *opt, const QWid
+     case SH_MenuBar_AltKeyNavigation:
+     case SH_MenuBar_MouseTracking:
+     case SH_Menu_MouseTracking:
+-    case SH_ComboBox_ListMouseTracking:
++    case SH_ComboBox_ListMouseTracking_Current:
+     case SH_Slider_StopMouseOverSlider:
+     case SH_MainWindow_SpaceBelowMenuBar:
+         ret = 1;
+@@ -594,48 +595,42 @@ void QWindowsStyle::drawPrimitive(PrimitiveElement pe, const QStyleOption *opt,
+ 
+     switch (pe) {
+ #if QT_CONFIG(toolbar)
+-  case PE_IndicatorToolBarSeparator:
+-        {
+-            QRect rect = opt->rect;
+-            const int margin = 2;
+-            QPen oldPen = p->pen();
+-            if (opt->state & State_Horizontal){
+-                const int offset = rect.width()/2;
+-                p->setPen(opt->palette.dark().color());
+-                p->drawLine(rect.bottomLeft().x() + offset,
+-                            rect.bottomLeft().y() - margin,
+-                            rect.topLeft().x() + offset,
+-                            rect.topLeft().y() + margin);
+-                p->setPen(opt->palette.light().color());
+-                p->drawLine(rect.bottomLeft().x() + offset + 1,
+-                            rect.bottomLeft().y() - margin,
+-                            rect.topLeft().x() + offset + 1,
+-                            rect.topLeft().y() + margin);
+-            }
+-            else{ //Draw vertical separator
+-                const int offset = rect.height()/2;
+-                p->setPen(opt->palette.dark().color());
+-                p->drawLine(rect.topLeft().x() + margin ,
+-                            rect.topLeft().y() + offset,
+-                            rect.topRight().x() - margin,
+-                            rect.topRight().y() + offset);
+-                p->setPen(opt->palette.light().color());
+-                p->drawLine(rect.topLeft().x() + margin ,
+-                            rect.topLeft().y() + offset + 1,
+-                            rect.topRight().x() - margin,
+-                            rect.topRight().y() + offset + 1);
+-            }
+-            p->setPen(oldPen);
++    case PE_IndicatorToolBarSeparator: {
++        QPainterStateGuard psg(p);
++        const QRect &rect = opt->rect;
++        constexpr int margin = 2;
++        if (opt->state & State_Horizontal){
++            const int offset = rect.width() / 2;
++            const auto &tl = rect.topLeft();
++            const auto &bl = rect.bottomLeft();
++            p->setPen(opt->palette.dark().color());
++            p->drawLine(QLine(bl.x() + offset, bl.y() - margin,
++                              tl.x() + offset, tl.y() + margin));
++            p->setPen(opt->palette.light().color());
++            p->drawLine(QLine(bl.x() + offset + 1, bl.y() - margin,
++                              tl.x() + offset + 1, tl.y() + margin));
++        }
++        else{ //Draw vertical separator
++            const int offset = rect.height() / 2;
++            const auto &tl = rect.topLeft();
++            const auto &tr = rect.topRight();
++            p->setPen(opt->palette.dark().color());
++            p->drawLine(QLine(tl.x() + margin, tl.y() + offset,
++                              tr.x() - margin, tr.y() + offset));
++            p->setPen(opt->palette.light().color());
++            p->drawLine(QLine(tl.x() + margin, tl.y() + offset + 1,
++                              tr.x() - margin, tr.y() + offset + 1));
+         }
+         break;
+-    case PE_IndicatorToolBarHandle:
+-        p->save();
++    }
++    case PE_IndicatorToolBarHandle: {
++        QPainterStateGuard psg(p);
+         p->translate(opt->rect.x(), opt->rect.y());
+         if (opt->state & State_Horizontal) {
+-            int x = opt->rect.width() / 2 - 4;
+-            if (opt->direction == Qt::RightToLeft)
+-                x -= 2;
+             if (opt->rect.height() > 4) {
++                int x = opt->rect.width() / 2 - 4;
++                if (opt->direction == Qt::RightToLeft)
++                    x -= 2;
+                 qDrawShadePanel(p, x, 2, 3, opt->rect.height() - 4,
+                                 opt->palette, false, 1, nullptr);
+                 qDrawShadePanel(p, x + 3, 2, 3, opt->rect.height() - 4,
+@@ -650,9 +645,8 @@ void QWindowsStyle::drawPrimitive(PrimitiveElement pe, const QStyleOption *opt,
+                                 opt->palette, false, 1, nullptr);
+             }
+         }
+-        p->restore();
+         break;
+-
++    }
+ #endif // QT_CONFIG(toolbar)
+     case PE_FrameButtonTool:
+     case PE_PanelButtonTool: {
+@@ -879,6 +873,13 @@ void QWindowsStyle::drawPrimitive(PrimitiveElement pe, const QStyleOption *opt,
+         }
+ #ifndef QT_NO_FRAME
+     case PE_Frame:
++        if (w && w->inherits("QComboBoxPrivateContainer")){
++            QStyleOption copy = *opt;
++            copy.state |= State_Raised;
++            proxy()->drawPrimitive(PE_PanelMenu, &copy, p, w);
++            break;
++        }
++        Q_FALLTHROUGH();
+     case PE_FrameMenu:
+         if (const QStyleOptionFrame *frame = qstyleoption_cast<const QStyleOptionFrame *>(opt)) {
+             if (frame->lineWidth == 2 || pe == PE_Frame) {
+@@ -901,6 +902,7 @@ void QWindowsStyle::drawPrimitive(PrimitiveElement pe, const QStyleOption *opt,
+             }
+         } else {
+             QPalette popupPal = opt->palette;
++            p->drawRect(opt->rect);
+             popupPal.setColor(QPalette::Light, opt->palette.window().color());
+             popupPal.setColor(QPalette::Midlight, opt->palette.light().color());
+             qDrawWinPanel(p, opt->rect, popupPal, opt->state & State_Sunken);
+@@ -927,6 +929,15 @@ void QWindowsStyle::drawPrimitive(PrimitiveElement pe, const QStyleOption *opt,
+                 p->drawRect(opt->rect);
+         }
+         break; }
++    case PE_PanelMenu:
++        if (w && w->inherits("QComboBoxPrivateContainer")){
++            const QBrush menuBackground = opt->palette.base().color();
++            QColor borderColor = opt->palette.window().color();
++            qDrawPlainRect(p, opt->rect, borderColor, 1, &menuBackground);
++        } else {
++            QCommonStyle::drawPrimitive(pe, opt, p, w);
++        }
++        break;
+     case PE_FrameWindow: {
+          QPalette popupPal = opt->palette;
+          popupPal.setColor(QPalette::Light, opt->palette.window().color());
+@@ -1166,23 +1177,24 @@ void QWindowsStyle::drawControl(ControlElement ce, const QStyleOption *opt, QPai
+ #if QT_CONFIG(menubar)
+     case CE_MenuBarItem:
+         if (const QStyleOptionMenuItem *mbi = qstyleoption_cast<const QStyleOptionMenuItem *>(opt)) {
+-            bool active = mbi->state & State_Selected;
+-            bool hasFocus = mbi->state & State_HasFocus;
+-            bool down = mbi->state & State_Sunken;
++            const bool active = mbi->state & State_Selected;
++            const QBrush buttonBrush = mbi->palette.brush(QPalette::Button);
+             QStyleOptionMenuItem newMbi = *mbi;
+-            p->fillRect(mbi->rect, mbi->palette.brush(QPalette::Button));
+-            if (active || hasFocus) {
+-                QBrush b = mbi->palette.brush(QPalette::Button);
+-                if (active && down)
+-                    p->setBrushOrigin(p->brushOrigin() + QPoint(1, 1));
+-                if (active && hasFocus)
++            p->fillRect(mbi->rect, buttonBrush);
++            if (active) {
++                const bool hasFocus = mbi->state & State_HasFocus;
++                const bool down = mbi->state & State_Sunken;
++                QPainterStateGuard psg(p, QPainterStateGuard::InitialState::NoSave);
++                if (down) {
++                    psg.save();
++                    p->setBrushOrigin(p->brushOriginF() + QPointF(1, 1));
++                }
++                if (hasFocus)
+                     qDrawShadeRect(p, mbi->rect.x(), mbi->rect.y(), mbi->rect.width(),
+-                                   mbi->rect.height(), mbi->palette, active && down, 1, 0, &b);
+-                if (active && down) {
++                                   mbi->rect.height(), mbi->palette, active && down, 1, 0, &buttonBrush);
++                if (down)
+                     newMbi.rect.translate(proxy()->pixelMetric(PM_ButtonShiftHorizontal, mbi, widget),
+-                                       proxy()->pixelMetric(PM_ButtonShiftVertical, mbi, widget));
+-                    p->setBrushOrigin(p->brushOrigin() - QPoint(1, 1));
+-                }
++                                          proxy()->pixelMetric(PM_ButtonShiftVertical, mbi, widget));
+             }
+             QCommonStyle::drawControl(ce, &newMbi, p, widget);
+         }
+-- 
+2.53.0.windows.2
+
