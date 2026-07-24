@@ -144,6 +144,7 @@ struct Args {
 	QString url;
 	Webview::StorageId storageId;
 	rpl::producer<QString> title;
+	QString nativeWindowTitle;
 	Ui::TitleBadgeDescriptor titleBadge;
 	rpl::producer<QString> bottom;
 	not_null<Delegate*> delegate;
@@ -323,6 +324,7 @@ private:
 	const not_null<Delegate*> _delegate;
 	QString _externalUrl;
 	QString _externalTitle;
+	QString _nativeWindowTitle;
 	int _externalBlockCount = 0;
 	bool _closeNeedConfirmation = false;
 	bool _hasSettingsButton = false;

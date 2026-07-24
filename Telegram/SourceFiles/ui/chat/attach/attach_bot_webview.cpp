@@ -1182,6 +1182,7 @@ Panel::Progress::Progress(QWidget *parent, Fn<QRect()> rect)
 Panel::Panel(Args &&args)
 : _storageId(args.storageId)
 , _delegate(args.delegate)
+, _nativeWindowTitle(std::move(args.nativeWindowTitle))
 , _externalShell(UseExternalBotWebApps())
 , _menuButtons(args.menuButtons)
 , _externalPanelParent(_externalShell ? std::make_unique<RpWidget>() : nullptr)
@@ -1210,14 +1211,19 @@ Panel::Panel(Args &&args)
 	_widget->setInnerSize(st::botWebViewPanelSize, true);
 
 	const auto panel = _widget.get();
-	rpl::duplicate(
-		args.title
-	) | rpl::on_next([=](const QString &title) {
-		const auto value = tr::lng_credits_box_history_entry_miniapp(tr::now)
-			+ u": "_q
-			+ title;
-		panel->window()->setWindowTitle(value);
-	}, panel->lifetime());
+	if (_nativeWindowTitle.isEmpty()) {
+		rpl::duplicate(
+			args.title
+		) | rpl::on_next([=](const QString &title) {
+			const auto value
+				= tr::lng_credits_box_history_entry_miniapp(tr::now)
+				+ u": "_q
+				+ title;
+			panel->window()->setWindowTitle(value);
+		}, panel->lifetime());
+	} else {
+		panel->window()->setWindowTitle(_nativeWindowTitle);
+	}
 
 	const auto params = _delegate->botThemeParams();
 	updateColorOverrides(params);
@@ -1747,6 +1753,7 @@ void Panel::sendExternalShellBootstrap() {
 		{ u"sameOrigin"_q, bool(_sameOrigin) },
 		{ u"initialOrigin"_q, _initialOrigin },
 		{ u"title"_q, _externalTitle },
+		{ u"nativeTitle"_q, _nativeWindowTitle },
 		{ u"metrics"_q, LinuxShell::Metrics() },
 		{ u"colors"_q, LinuxShell::ColorPayload(externalShellColors(params)) },
 		{ u"bottomText"_q, QString() },
@@ -2608,7 +2615,12 @@ void Panel::setTitle(rpl::producer<QString> title) {
 	}
 	std::move(title) | rpl::on_next([=](const QString &title) {
 		_externalTitle = title;
-		sendExternalShellMethod("setTitle", { { u"title"_q, title } });
+		sendExternalShellMethod(
+			"setTitle",
+			{
+				{ u"title"_q, title },
+				{ u"nativeTitle"_q, _nativeWindowTitle },
+			});
 	}, _widget->lifetime());
 }
 

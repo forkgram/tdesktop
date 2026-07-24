@@ -277,6 +277,14 @@
 		setMetric('--fullscreen-control-gap', data.fullscreenControlGap);
 	}
 
+	function applyTitle(data) {
+		const visibleTitle = (data && data.title) || '';
+		title.textContent = visibleTitle;
+		document.title = (data && data.nativeTitle)
+			|| visibleTitle
+			|| 'Telegram';
+	}
+
 	function colorForBackground(value) {
 		if (!/^#[0-9a-f]{6}$/i.test(value || '')) {
 			return null;
@@ -997,8 +1005,7 @@
 			applyColors(data && data.colors);
 			applyChrome(data || {});
 			shellState.bottomText = '';
-			title.textContent = (data && data.title) || '';
-			document.title = (data && data.title) || 'Telegram';
+			applyTitle(data);
 			sameOrigin = !!(data && data.sameOrigin);
 			frameUrl = (data && data.url) || 'about:blank';
 			frameOrigin = sameOrigin ? originFromUrl(frameUrl) : '';
@@ -1021,8 +1028,7 @@
 			if (!isNativeToken(token)) {
 				return;
 			}
-			title.textContent = (data && data.title) || '';
-			document.title = (data && data.title) || 'Telegram';
+			applyTitle(data);
 		},
 		setChrome: function(data, token) {
 			if (!isNativeToken(token)) {

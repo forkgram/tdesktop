@@ -96,7 +96,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_window.h"
 
 #include <QSvgRenderer>
-#include <QtGui/QWindow>
 
 namespace InlineBots {
 namespace {
@@ -1504,6 +1503,10 @@ void WebViewInstance::show(ShowArgs &&args) {
 		.url = args.result.url,
 		.storageId = _session->local().resolveStorageIdBots(),
 		.title = std::move(title),
+		.nativeWindowTitle = u"Bot_%1_%2_%3"_q
+			.arg(_bot->id.value)
+			.arg(_bot->session().user()->id.value)
+			.arg(args.title),
 		.titleBadge = std::move(titleBadge),
 		.bottom = rpl::single('@' + _bot->username()),
 		.delegate = static_cast<Ui::BotWebView::Delegate*>(this),
@@ -1572,10 +1575,6 @@ void WebViewInstance::show(ShowArgs &&args) {
 		}, platformButton->lifetime());
 	}
 	started(args.result.queryId);
-	_panel->toastParent()->windowHandle()->setTitle(u"Bot_%1_%2_%3"_q
-		.arg(_bot->id.value)
-		.arg(_bot->session().user()->id.value)
-		.arg(args.title));
 
 	if (const auto strong = PendingActivation.get()) {
 		if (strong == this) {
