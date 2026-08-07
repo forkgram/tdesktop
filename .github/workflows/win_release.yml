@@ -30,12 +30,6 @@ on:
         # 'off' must be quoted: YAML reads the bare word as boolean false, dropping it from the choices.
         options: ['off', scheduled, testing, released]
         default: 'off'
-  push:
-    tags:
-      - 'v*'
-  schedule:
-    # Keep the library and Qt caches from the 7-day eviction; rebuilds only what changed.
-    - cron: '0 3 * * 1,4'
 
 permissions:
   contents: write

@@ -2,10 +2,7 @@
 name: Docker.
 
 on:
-  push:
-    paths:
-      - '.github/workflows/docker.yml'
-      - 'Telegram/build/docker/centos_env/**'
+  workflow_dispatch:
 
 jobs:
   docker:

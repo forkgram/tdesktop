@@ -17,12 +17,6 @@ on:
         # 'off' must be quoted: YAML reads the bare word as boolean false, dropping it from the choices.
         options: ['off', scheduled, testing, released]
         default: 'off'
-  push:
-    tags:
-      - 'v*'
-  schedule:
-    # Keep the library cache from the 7-day eviction; centos_env builds every library from source.
-    - cron: '0 5 * * 1,4'
 
 permissions:
   contents: write
