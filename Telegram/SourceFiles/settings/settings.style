@@ -97,7 +97,6 @@ settingsUpdate: SettingsButton(infoMainButton, settingsButtonNoIcon) {
 }
 settingsUpdateStatePosition: point(22px, 29px);
 
-settingsIconFork: icon {{ "settings/settings_fork-22x22", settingsIconFg }};
 settingsIconInterfaceScale: icon {{ "settings/interface_scale", settingsIconFg }};
 
 settingsPremiumIconDouble: icon {{ "settings/premium/double", settingsIconFg }};
