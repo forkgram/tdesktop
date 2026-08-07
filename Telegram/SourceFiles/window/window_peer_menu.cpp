@@ -305,6 +305,78 @@ Fn<void()> GoToFirstMessageHandler(
 	return [=] { jump(QDate(2013, 8, 1)); };
 }
 
+Fn<void()> GoToLastMentionHandler(
+		not_null<Window::SessionController*> controller,
+		not_null<PeerData*> peer) {
+	const auto weak = base::make_weak(controller.get());
+	const auto requestId = std::make_shared<mtpRequestId>(0);
+	const auto open = [=](MsgId id) {
+		if (const auto strong = weak.get()) {
+			strong->showPeerHistory(
+				peer,
+				SectionShow::Way::Forward,
+				id);
+		}
+	};
+	return [=] {
+		if (*requestId > 0) {
+			return;
+		}
+		using Flag = MTPmessages_Search::Flag;
+		*requestId = peer->session().api().request(MTPmessages_Search(
+			MTP_flags(Flag()),
+			peer->input(),
+			MTP_string(QString()),
+			MTP_inputPeerEmpty(),
+			MTP_inputPeerEmpty(),
+			MTP_vector<MTPReaction>(),
+			MTP_int(0), // top_msg_id
+			MTP_inputMessagesFilterMyMentions(),
+			MTP_int(0), // min_date
+			MTP_int(0), // max_date
+			MTP_int(0), // offset_id
+			MTP_int(0), // add_offset
+			MTP_int(10), // limit
+			MTP_int(0), // max_id
+			MTP_int(0), // min_id
+			MTP_long(0) // hash
+		)).done([=](const MTPmessages_Messages &result) {
+			*requestId = 0;
+			const auto &messages = [&]() -> const QVector<MTPMessage> & {
+				switch (result.type()) {
+				case mtpc_messages_messages:
+					return result.c_messages_messages().vmessages().v;
+				case mtpc_messages_messagesSlice:
+					return result.c_messages_messagesSlice().vmessages().v;
+				case mtpc_messages_channelMessages:
+					return result.c_messages_channelMessages().vmessages().v;
+				}
+				static const QVector<MTPMessage> kEmpty;
+				return kEmpty;
+			}();
+			MsgId maxId = 0;
+			for (const auto &message : messages) {
+				const auto item = peer->owner().addNewMessage(
+					message,
+					MessageFlags(),
+					NewMessageType::Existing);
+				if (item) {
+					maxId = std::max(maxId, item->id);
+				}
+			}
+			if (maxId) {
+				open(maxId);
+			} else {
+				Ui::Toast::Show(
+					controller->widget(),
+					tr::lng_message_not_found(tr::now));
+			}
+		}).fail([=](const MTP::Error &error) {
+			*requestId = 0;
+		}).send();
+	};
+}
+
 class Filler {
 public:
 	Filler(
@@ -376,6 +448,7 @@ private:
 	void addSetPersonalChannel();
 
 	void addGoToFirstMessage();
+	void addGoToLastMention();
 	void addGoToScheduled();
 
 	[[nodiscard]] bool skipCreateActions() const;
@@ -1264,6 +1337,13 @@ void Filler::addGoToFirstMessage() {
 		&st::menuIconShowInChat);
 }
 
+void Filler::addGoToLastMention() {
+	_addAction(
+		QString("Go to the last message mentioned me"),
+		GoToLastMentionHandler(_controller, _peer),
+		&st::menuIconShowInChat);
+}
+
 void Filler::addGoToScheduled() {
 	if (!Data::CanSendAnything(_peer)) {
 		return;
@@ -1939,6 +2019,7 @@ void Filler::fillHistoryActions() {
 	addDeleteChat();
 	addLeaveChat();
 	addGoToFirstMessage();
+	addGoToLastMention();
 	addGoToScheduled();
 }
 
@@ -1969,6 +2050,7 @@ void Filler::fillProfileActions() {
 	addDeleteContact();
 	addDeleteTopic();
 	addGoToFirstMessage();
+	addGoToLastMention();
 	addGoToScheduled();
 }
 
