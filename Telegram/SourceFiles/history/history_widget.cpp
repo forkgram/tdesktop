@@ -5951,6 +5951,10 @@ History *HistoryWidget::history() const {
 	return _history;
 }
 
+int HistoryWidget::listViewportHeight() const {
+	return _scroll ? _scroll->height() : 0;
+}
+
 PeerData *HistoryWidget::peer() const {
 	return _peer;
 }

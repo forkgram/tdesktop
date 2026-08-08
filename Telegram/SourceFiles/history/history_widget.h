@@ -203,6 +203,7 @@ public:
 	void updateControlsGeometry();
 
 	History *history() const;
+	[[nodiscard]] int listViewportHeight() const;
 	PeerData *peer() const;
 	void setMsgId(MsgId showAtMsgId, const Window::SectionShow &params = {});
 	MsgId msgId() const;

@@ -74,6 +74,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_updates.h"
 #include "mtproto/mtproto_config.h"
 #include "history/history.h"
+#include "history/history_widget.h"
 #include "history/history_item_helpers.h" // GetErrorForSending.
 #include "history/history_item_components.h"
 #include "history/view/controls/history_view_forward_panel.h"
@@ -326,9 +327,14 @@ Fn<void()> GoToMentionHandler(
 		}
 		// Anchor on the current viewport: the topmost visible message for
 		// "previous" and the bottommost visible message for "next".
+		// Plain group/private chats live in HistoryWidget (History keeps
+		// scrollTopItem = the message at the top of the visible window);
+		// channels use HistoryView::ChatWidget (ListWidget tracks the
+		// visibleTopItem). Try the chat-section first, fall back to history.
 		MsgId anchorId = 0;
 		if (const auto strong = weak.get()) {
-			if (const auto chat = strong->content()->mainSectionAsChat()) {
+			const auto main = strong->content();
+			if (const auto chat = main->mainSectionAsChat()) {
 				const auto list = chat->listWidget();
 				if (!after) {
 					if (const auto item = list->visibleTopItem()) {
@@ -340,9 +346,28 @@ Fn<void()> GoToMentionHandler(
 						anchorId = item->data()->fullId().msg;
 					}
 				}
+			} else if (const auto historyWidget = main->historyWidget()) {
+				if (const auto history = historyWidget->history()) {
+					if (history->peer == peer) {
+						if (const auto top = history->scrollTopItem) {
+							if (!after) {
+								anchorId = top->data()->fullId().msg;
+							} else if (const auto bottom = history->scrollBottomItem(
+										historyWidget->listViewportHeight())) {
+								anchorId = bottom->data()->fullId().msg;
+							}
+						}
+					}
+				}
 			}
 		}
 		using Flag = MTPmessages_Search::Flag;
+		if (after && !anchorId) {
+			Ui::Toast::Show(
+				controller->widget(),
+				tr::lng_message_not_found(tr::now));
+			return;
+		}
 		*requestId = peer->session().api().request(MTPmessages_Search(
 			MTP_flags(Flag()),
 			peer->input(),

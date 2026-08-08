@@ -141,6 +141,7 @@ public:
 	[[nodiscard]] PeerData *peer() const;
 	[[nodiscard]] Ui::ChatTheme *customChatTheme() const;
 	[[nodiscard]] HistoryView::ChatWidget *mainSectionAsChat() const;
+	[[nodiscard]] HistoryWidget *historyWidget() const;
 
 	int backgroundFromY() const;
 	void showSection(
