@@ -34,7 +34,7 @@ jobs:
 
       - name: Get repository name.
         shell: bash
-        run: echo "REPO_NAME=${GITHUB_REPOSITORY##*/}" >> $GITHUB_ENV
+        run: echo "REPO_NAME=tdesktop" >> $GITHUB_ENV
 
       - name: Clone.
         uses: actions/checkout@v7
