@@ -191,6 +191,18 @@ jobs:
         shell: bash
         run: find $LibrariesPath '(' '(' ! '(' -name '*.lib' -o -name '*.a' -o -name '*.exe' -o -name '*.h' -o -name '*.hpp' -o -name '*.inc' -o -name '*.cmake' -o -path '*/include/*' -o -path '*/objects-*' -o -path '*/cache_keys/*' -o -path '*/patches/*' ')' -type f ')' -o -empty ')' -delete
 
+      - name: Drop Debug libraries to free disk space.
+        shell: bash
+        run: |
+          # We only build and link Release; debug-configuration libraries and
+          # object trees are pure waste on the tiny GitHub-hosted C: drive.
+          find $LibrariesPath -type d -iname 'Debug' -prune -exec rm -rf {} + 2>/dev/null || true
+          find $LibrariesPath -type d -iname 'Debug_x64' -prune -exec rm -rf {} + 2>/dev/null || true
+          find $LibrariesPath -type d -name '.obj' -prune -exec rm -rf {} + 2>/dev/null || true
+          find $LibrariesPath -type d -ipath '*obj*debug*' -prune -exec rm -rf {} + 2>/dev/null || true
+          find $LibrariesPath -type f -name '*.pdb' ! -path '*Release*' -delete 2>/dev/null || true
+          df -h "$LibrariesPath"
+
       - name: Build output cache.
         id: cache-build
         uses: actions/cache@v5
