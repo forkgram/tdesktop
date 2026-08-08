@@ -78,6 +78,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history_item_components.h"
 #include "history/view/controls/history_view_forward_panel.h"
 #include "history/view/history_view_context_menu.h"
+#include "history/view/history_view_chat_section.h"
 #include "history/view/history_view_schedule_box.h"
 #include "history/view/history_view_scheduled_section.h"
 #include "iv/editor/iv_editor_session.h"
@@ -305,9 +306,10 @@ Fn<void()> GoToFirstMessageHandler(
 	return [=] { jump(QDate(2013, 8, 1)); };
 }
 
-Fn<void()> GoToLastMentionHandler(
+Fn<void()> GoToMentionHandler(
 		not_null<Window::SessionController*> controller,
-		not_null<PeerData*> peer) {
+		not_null<PeerData*> peer,
+		bool after) {
 	const auto weak = base::make_weak(controller.get());
 	const auto requestId = std::make_shared<mtpRequestId>(0);
 	const auto open = [=](MsgId id) {
@@ -322,6 +324,24 @@ Fn<void()> GoToLastMentionHandler(
 		if (*requestId > 0) {
 			return;
 		}
+		// Anchor on the current viewport: the topmost visible message for
+		// "previous" and the bottommost visible message for "next".
+		MsgId anchorId = 0;
+		if (const auto strong = weak.get()) {
+			if (const auto chat = strong->content()->mainSectionAsChat()) {
+				const auto list = chat->listWidget();
+				if (!after) {
+					if (const auto item = list->visibleTopItem()) {
+						anchorId = item->data()->fullId().msg;
+					}
+				} else {
+					if (const auto item = list->lookupItemByY(
+							list->visibleBottom())) {
+						anchorId = item->data()->fullId().msg;
+					}
+				}
+			}
+		}
 		using Flag = MTPmessages_Search::Flag;
 		*requestId = peer->session().api().request(MTPmessages_Search(
 			MTP_flags(Flag()),
@@ -334,11 +354,11 @@ Fn<void()> GoToLastMentionHandler(
 			MTP_inputMessagesFilterMyMentions(),
 			MTP_int(0), // min_date
 			MTP_int(0), // max_date
-			MTP_int(0), // offset_id
+			MTP_int(after ? 0 : anchorId), // offset_id
 			MTP_int(0), // add_offset
 			MTP_int(10), // limit
 			MTP_int(0), // max_id
-			MTP_int(0), // min_id
+			MTP_int(after ? (anchorId + 1) : 0), // min_id
 			MTP_long(0) // hash
 		)).done([=](const MTPmessages_Messages &result) {
 			*requestId = 0;
@@ -354,18 +374,22 @@ Fn<void()> GoToLastMentionHandler(
 				static const QVector<MTPMessage> kEmpty;
 				return kEmpty;
 			}();
-			MsgId maxId = 0;
+			auto chosenId = MsgId();
 			for (const auto &message : messages) {
 				const auto item = peer->owner().addNewMessage(
 					message,
 					MessageFlags(),
 					NewMessageType::Existing);
 				if (item) {
-					maxId = std::max(maxId, item->id);
+					if (!after) {
+						chosenId = std::max(chosenId, item->id);
+					} else if (!chosenId || item->id < chosenId) {
+						chosenId = item->id;
+					}
 				}
 			}
-			if (maxId) {
-				open(maxId);
+			if (chosenId) {
+				open(chosenId);
 			} else {
 				Ui::Toast::Show(
 					controller->widget(),
@@ -448,7 +472,8 @@ private:
 	void addSetPersonalChannel();
 
 	void addGoToFirstMessage();
-	void addGoToLastMention();
+	void addGoToMentionPrevious();
+	void addGoToMentionNext();
 	void addGoToScheduled();
 
 	[[nodiscard]] bool skipCreateActions() const;
@@ -1337,10 +1362,17 @@ void Filler::addGoToFirstMessage() {
 		&st::menuIconShowInChat);
 }
 
-void Filler::addGoToLastMention() {
+void Filler::addGoToMentionPrevious() {
 	_addAction(
-		QString("Go to the last message mentioned me"),
-		GoToLastMentionHandler(_controller, _peer),
+		QString("Go to the Pre msg @me"),
+		GoToMentionHandler(_controller, _peer, false),
+		&st::menuIconShowInChat);
+}
+
+void Filler::addGoToMentionNext() {
+	_addAction(
+		QString("Go to the Next msg @me"),
+		GoToMentionHandler(_controller, _peer, true),
 		&st::menuIconShowInChat);
 }
 
@@ -2019,7 +2051,8 @@ void Filler::fillHistoryActions() {
 	addDeleteChat();
 	addLeaveChat();
 	addGoToFirstMessage();
-	addGoToLastMention();
+	addGoToMentionPrevious();
+	addGoToMentionNext();
 	addGoToScheduled();
 }
 
@@ -2050,7 +2083,8 @@ void Filler::fillProfileActions() {
 	addDeleteContact();
 	addDeleteTopic();
 	addGoToFirstMessage();
-	addGoToLastMention();
+	addGoToMentionPrevious();
+	addGoToMentionNext();
 	addGoToScheduled();
 }
 

@@ -381,6 +381,15 @@ public:
 	[[nodiscard]] bool showCopyRestrictionForSelected();
 	[[nodiscard]] bool hasSelectRestriction() const;
 	[[nodiscard]] Element *lookupItemByY(int y) const;
+	[[nodiscard]] Element *visibleTopItem() const {
+		return _visibleTopItem;
+	}
+	[[nodiscard]] int visibleTop() const {
+		return _visibleTop;
+	}
+	[[nodiscard]] int visibleBottom() const {
+		return _visibleBottom;
+	}
 	[[nodiscard]] not_null<HistoryItem*> lookupItemByPoint(
 		QPoint point,
 		not_null<Element*> view) const;

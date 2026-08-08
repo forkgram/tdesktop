@@ -15,6 +15,10 @@ class HistoryWidget;
 class StackItem;
 class Image;
 
+namespace HistoryView {
+class ChatWidget;
+} // namespace HistoryView
+
 namespace Bot {
 struct SendCommandRequest;
 } // namespace Bot
@@ -136,6 +140,7 @@ public:
 
 	[[nodiscard]] PeerData *peer() const;
 	[[nodiscard]] Ui::ChatTheme *customChatTheme() const;
+	[[nodiscard]] HistoryView::ChatWidget *mainSectionAsChat() const;
 
 	int backgroundFromY() const;
 	void showSection(
