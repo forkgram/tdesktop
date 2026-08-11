@@ -1366,7 +1366,7 @@ void Filler::addGoToMentionPrevious() {
 	_addAction(
 		QString("Go to the Pre msg @me"),
 		GoToMentionHandler(_controller, _peer),
-		&st::menuIconShowInChat);
+		&st::menuIconExpandComments);
 }
 
 void Filler::addGoToScheduled() {
