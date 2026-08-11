@@ -309,8 +309,7 @@ Fn<void()> GoToFirstMessageHandler(
 
 Fn<void()> GoToMentionHandler(
 		not_null<Window::SessionController*> controller,
-		not_null<PeerData*> peer,
-		bool after) {
+		not_null<PeerData*> peer) {
 	const auto weak = base::make_weak(controller.get());
 	const auto requestId = std::make_shared<mtpRequestId>(0);
 	const auto open = [=](MsgId id) {
@@ -325,8 +324,7 @@ Fn<void()> GoToMentionHandler(
 		if (*requestId > 0) {
 			return;
 		}
-		// Anchor on the current viewport: the topmost visible message for
-		// "previous" and the bottommost visible message for "next".
+		// Anchor on the current viewport: the topmost visible message.
 		// Plain group/private chats live in HistoryWidget (History keeps
 		// scrollTopItem = the message at the top of the visible window);
 		// channels use HistoryView::ChatWidget (ListWidget tracks the
@@ -336,38 +334,20 @@ Fn<void()> GoToMentionHandler(
 			const auto main = strong->content();
 			if (const auto chat = main->mainSectionAsChat()) {
 				const auto list = chat->listWidget();
-				if (!after) {
-					if (const auto item = list->visibleTopItem()) {
-						anchorId = item->data()->fullId().msg;
-					}
-				} else {
-					if (const auto item = list->lookupItemByY(
-							list->visibleBottom())) {
-						anchorId = item->data()->fullId().msg;
-					}
+				if (const auto item = list->visibleTopItem()) {
+					anchorId = item->data()->fullId().msg;
 				}
 			} else if (const auto historyWidget = main->historyWidget()) {
 				if (const auto history = historyWidget->history()) {
 					if (history->peer == peer) {
 						if (const auto top = history->scrollTopItem) {
-							if (!after) {
-								anchorId = top->data()->fullId().msg;
-							} else if (const auto bottom = history->scrollBottomItem(
-										historyWidget->listViewportHeight())) {
-								anchorId = bottom->data()->fullId().msg;
-							}
+							anchorId = top->data()->fullId().msg;
 						}
 					}
 				}
 			}
 		}
 		using Flag = MTPmessages_Search::Flag;
-		if (after && !anchorId) {
-			Ui::Toast::Show(
-				controller->widget(),
-				tr::lng_message_not_found(tr::now));
-			return;
-		}
 		*requestId = peer->session().api().request(MTPmessages_Search(
 			MTP_flags(Flag()),
 			peer->input(),
@@ -379,11 +359,11 @@ Fn<void()> GoToMentionHandler(
 			MTP_inputMessagesFilterMyMentions(),
 			MTP_int(0), // min_date
 			MTP_int(0), // max_date
-			MTP_int(after ? 0 : anchorId), // offset_id
+			MTP_int(anchorId), // offset_id
 			MTP_int(0), // add_offset
 			MTP_int(10), // limit
 			MTP_int(0), // max_id
-			MTP_int(after ? (anchorId + 1) : 0), // min_id
+			MTP_int(0), // min_id
 			MTP_long(0) // hash
 		)).done([=](const MTPmessages_Messages &result) {
 			*requestId = 0;
@@ -406,11 +386,7 @@ Fn<void()> GoToMentionHandler(
 					MessageFlags(),
 					NewMessageType::Existing);
 				if (item) {
-					if (!after) {
-						chosenId = std::max(chosenId, item->id);
-					} else if (!chosenId || item->id < chosenId) {
-						chosenId = item->id;
-					}
+					chosenId = std::max(chosenId, item->id);
 				}
 			}
 			if (chosenId) {
@@ -498,7 +474,6 @@ private:
 
 	void addGoToFirstMessage();
 	void addGoToMentionPrevious();
-	void addGoToMentionNext();
 	void addGoToScheduled();
 
 	[[nodiscard]] bool skipCreateActions() const;
@@ -1390,14 +1365,7 @@ void Filler::addGoToFirstMessage() {
 void Filler::addGoToMentionPrevious() {
 	_addAction(
 		QString("Go to the Pre msg @me"),
-		GoToMentionHandler(_controller, _peer, false),
-		&st::menuIconShowInChat);
-}
-
-void Filler::addGoToMentionNext() {
-	_addAction(
-		QString("Go to the Next msg @me"),
-		GoToMentionHandler(_controller, _peer, true),
+		GoToMentionHandler(_controller, _peer),
 		&st::menuIconShowInChat);
 }
 
@@ -2077,7 +2045,6 @@ void Filler::fillHistoryActions() {
 	addLeaveChat();
 	addGoToFirstMessage();
 	addGoToMentionPrevious();
-	addGoToMentionNext();
 	addGoToScheduled();
 }
 
@@ -2109,7 +2076,6 @@ void Filler::fillProfileActions() {
 	addDeleteTopic();
 	addGoToFirstMessage();
 	addGoToMentionPrevious();
-	addGoToMentionNext();
 	addGoToScheduled();
 }
 
