@@ -2604,6 +2604,18 @@ auto History::findItemAndOffset(int top) const -> std::pair<Element*, int> {
 	return {};
 }
 
+auto History::scrollBottomItem(int viewportHeight) const -> Element* {
+	if (!scrollTopItem || viewportHeight <= 0) {
+		return nullptr;
+	}
+	// The viewport top in content coordinates is
+	// scrollTopItem's top + the saved offset from the window top.
+	const auto viewportTop = scrollTopItem->block()->y()
+		+ scrollTopItem->y()
+		+ scrollTopOffset;
+	return findItemAndOffset(viewportTop + viewportHeight).first;
+}
+
 auto History::findScrollTopItem(int top) const -> Element* {
 	if (isEmpty()) {
 		return nullptr;

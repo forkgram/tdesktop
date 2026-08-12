@@ -441,6 +441,7 @@ public:
 	void countScrollState(int top);
 
 	[[nodiscard]] std::pair<Element*, int> findItemAndOffset(int top) const;
+	[[nodiscard]] Element *scrollBottomItem(int viewportHeight) const;
 
 	[[nodiscard]] MsgId nextNonHistoryEntryId();
 

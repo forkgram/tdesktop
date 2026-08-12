@@ -214,6 +214,9 @@ public:
 	base::unique_qptr<Ui::PopupMenu> listFillSenderUserpicMenu(
 		PeerId userpicPeerId) override;
 	Ui::ElasticScroll *listScrollArea() const override;
+	[[nodiscard]] not_null<ListWidget*> listWidget() const {
+		return _inner;
+	}
 
 	// CornerButtonsDelegate delegate.
 	void cornerButtonsShowAtPosition(

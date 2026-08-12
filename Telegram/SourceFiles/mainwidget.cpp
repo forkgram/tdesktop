@@ -1669,6 +1669,14 @@ Ui::ChatTheme *MainWidget::customChatTheme() const {
 	return _history->customChatTheme();
 }
 
+HistoryView::ChatWidget *MainWidget::mainSectionAsChat() const {
+	return dynamic_cast<HistoryView::ChatWidget*>(_mainSection.get());
+}
+
+HistoryWidget *MainWidget::historyWidget() const {
+	return _history;
+}
+
 bool MainWidget::saveSectionInStack(
 		const SectionShow &params,
 		Window::SectionWidget *newMainSection) {
