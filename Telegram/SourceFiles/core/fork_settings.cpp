@@ -287,9 +287,6 @@ void ForkSettings::setHideFromBlockedUsers(bool newValue) {
 	_hideFromBlockedUsers = newValue;
 }
 
-[[nodiscard]] bool ForkSettings::hideVoiceVideoButton() const {
-	return _hideVoiceVideoButton.current();
-}
 void ForkSettings::setHideVoiceVideoButton(bool newValue) {
 	_hideVoiceVideoButton = newValue;
 }
