@@ -62,6 +62,7 @@ QByteArray ForkSettings::serialize() const {
 			<< _botsPlatforms
 			<< qint32(_archivedStoriesAreHidden ? 1 : 0)
 			<< qint32(_hideFromBlockedUsers ? 1 : 0)
+			<< qint32(_hideVoiceVideoButton.current() ? 1 : 0)
 			;
 	}
 	return result;
@@ -99,6 +100,7 @@ void ForkSettings::addFromSerialized(const QByteArray &serialized) {
 	qint32 additionalButtonsWebBot = _additionalButtonsWebBot;
 	qint32 archivedStoriesAreHidden = _archivedStoriesAreHidden;
 	qint32 hideFromBlockedUsers = _hideFromBlockedUsers;
+	qint32 hideVoiceVideoButton = _hideVoiceVideoButton.current();
 	QString botsPlatforms = _botsPlatforms;
 
 	if (!stream.atEnd()) {
@@ -150,6 +152,9 @@ void ForkSettings::addFromSerialized(const QByteArray &serialized) {
 	if (!stream.atEnd()) {
 		stream >> hideFromBlockedUsers;
 	}
+	if (!stream.atEnd()) {
+		stream >> hideVoiceVideoButton;
+	}
 	if (stream.status() != QDataStream::Ok) {
 		LOG(("App Error: "
 			"Bad data for Core::ForkSettings::constructFromSerialized()"));
@@ -181,6 +186,7 @@ void ForkSettings::addFromSerialized(const QByteArray &serialized) {
 	_additionalButtonsWebBot = (additionalButtonsWebBot == 1);
 	_archivedStoriesAreHidden = (archivedStoriesAreHidden == 1);
 	setHideFromBlockedUsers(hideFromBlockedUsers == 1);
+	_hideVoiceVideoButton = (hideVoiceVideoButton == 1);
 	_botsPlatforms = std::move(botsPlatforms);
 }
 
@@ -204,6 +210,7 @@ void ForkSettings::resetOnLastLogout() {
 	_skipShareFromBot = false;
 	_copyLoginCode = false;
 	_additionalButtonsWebBot = false;
+	_hideVoiceVideoButton = false;
 	_archivedStoriesAreHidden = false;
 	setHideFromBlockedUsers(false);
 	_botsPlatforms = QString();
@@ -278,6 +285,13 @@ void ForkSettings::setArchivedStoriesAreHidden(bool newValue) {
 void ForkSettings::setHideFromBlockedUsers(bool newValue) {
 	StaticHideFromBlockedUsers = newValue;
 	_hideFromBlockedUsers = newValue;
+}
+
+[[nodiscard]] bool ForkSettings::hideVoiceVideoButton() const {
+	return _hideVoiceVideoButton.current();
+}
+void ForkSettings::setHideVoiceVideoButton(bool newValue) {
+	_hideVoiceVideoButton = newValue;
 }
 
 } // namespace Core

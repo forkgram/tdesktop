@@ -565,6 +565,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_settings_auto_copy_login_codes" = "Auto-copy incoming login codes";
 "lng_settings_hide_archived_stories" = "Hide archived stories";
 "lng_settings_hide_from_blocked_users" = "Hide messages from blocked users";
+"lng_settings_hide_voice_video_button" = "Hide voice/video message button";
 "lng_settings_skip_share_from_bot" = "Skip share box from app bots";
 "lng_settings_additional_buttons_web_bot" = "Display additional buttons for app bots";
 

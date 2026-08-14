@@ -677,6 +677,15 @@ void BuildForkSectionContent(SectionBuilder &builder) {
 			Core::App().settings().fork().setHideFromBlockedUsers(checked);
 		});
 
+	add(
+		u"fork/hide_voice_video_button"_q,
+		{ u"hide"_q, u"voice"_q, u"video"_q, u"button"_q },
+		tr::lng_settings_hide_voice_video_button(),
+		[] { return Core::App().settings().fork().hideVoiceVideoButton(); },
+		[](bool checked) {
+			Core::App().settings().fork().setHideVoiceVideoButton(checked);
+		});
+
 	builder.addSkip();
 	builder.addDivider();
 	builder.addSkip();
