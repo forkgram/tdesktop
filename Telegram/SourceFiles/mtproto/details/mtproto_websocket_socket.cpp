@@ -71,11 +71,14 @@ WebSocketSocket::WebSocketSocket(
 		&QAbstractSocket::errorOccurred,
 		wrap([=](Error e) { handleError(e); }));
 
-	connect(&_socket, &QSslSocket::sslErrors, [=](const QList<QSslError>&) {
-		if (!_verifyCertificate) {
-			_socket.ignoreSslErrors();
-		}
-	});
+	connect(
+		&_socket,
+		QOverload<const QList<QSslError>&>::of(&QSslSocket::sslErrors),
+		[=](const QList<QSslError>&) {
+			if (!_verifyCertificate) {
+				_socket.ignoreSslErrors();
+			}
+		});
 }
 
 WebSocketSocket::~WebSocketSocket() {
