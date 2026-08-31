@@ -381,6 +381,13 @@ InnerWidget::InnerWidget(
 
 	setupOnlineStatusCheck();
 
+	Core::App().settings().fork().coloredLastSeenDotsChanges(
+	) | rpl::on_next([=] {
+		_rowsScrollCache.clear();
+		_cachedRows.clear();
+		update();
+	}, lifetime());
+
 	rpl::merge(
 		session().data().chatsListChanges(),
 		session().data().chatsListLoadedEvents()

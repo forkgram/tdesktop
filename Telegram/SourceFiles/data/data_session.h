@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/timer.h"
 #include "data/data_cloud_file.h"
 #include "data/data_groups.h"
+#include "data/data_lastseen_badge.h"
 #include "data/data_star_gift.h"
 #include "dialogs/dialogs_main_list.h"
 #include "history/history_location_manager.h"
@@ -307,6 +308,9 @@ public:
 
 	void watchForOffline(not_null<UserData*> user, TimeId now = 0);
 	void maybeStopWatchForOffline(not_null<UserData*> user);
+	void watchForLastSeenBadgeChange(
+		not_null<UserData*> user,
+		TimeId now = 0);
 
 	void recordSharingDisabledTime(not_null<UserData*> user);
 	[[nodiscard]] bool sharingRecentlyDisabledByMe(
@@ -1051,6 +1055,7 @@ private:
 	void setupUserIsContactViewer();
 
 	void checkLocalUsersWentOffline();
+	void checkLastSeenBadgeChanges();
 
 	void scheduleNextTTLs();
 	void checkTTLs();
@@ -1412,6 +1417,9 @@ private:
 
 	base::flat_map<not_null<UserData*>, TimeId> _watchingForOffline;
 	base::Timer _watchForOfflineTimer;
+	base::flat_map<not_null<UserData*>, LastSeenBadge>
+		_watchingForLastSeenBadgeChange;
+	base::Timer _watchForLastSeenBadgeChangeTimer;
 	base::flat_map<not_null<UserData*>, TimeId> _sharingDisabledTimes;
 
 	base::flat_map<not_null<PeerData*>, MTP::DcId> _peerStatsDcIds;

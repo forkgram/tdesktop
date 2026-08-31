@@ -18,6 +18,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 class History;
 class HistoryItem;
 
+namespace Data {
+enum class LastSeenBadge : uint8;
+} // namespace Data
+
 namespace style {
 struct DialogRow;
 } // namespace style
@@ -102,7 +106,7 @@ public:
 	}
 	void recountHeight(float64 narrowRatio, FilterId filterId);
 
-	void updateCornerBadgeShown(
+	Data::LastSeenBadge updateCornerBadgeShown(
 		not_null<PeerData*> peer,
 		Fn<void()> updateCallback = nullptr,
 		bool hasUnreadBadgesAbove = false,
@@ -164,6 +168,7 @@ private:
 		CornerLayersManager();
 
 		[[nodiscard]] bool isSameLayer(Layer layer) const;
+		[[nodiscard]] bool isFadingOut(Layer layer) const;
 		[[nodiscard]] bool isDisplayedNone() const;
 		[[nodiscard]] float64 progressForLayer(Layer layer) const;
 		[[nodiscard]] float64 progress() const;
@@ -192,6 +197,7 @@ private:
 		uint32 storiesHasVideoStream : 1 = 0;
 		uint32 active : 1 = 0;
 		uint32 hidden : 1 = 0;
+		uint8 lastSeenBadge = 0;
 	};
 
 	void setCornerBadgeShown(
@@ -208,7 +214,8 @@ private:
 		const Ui::PaintContext &context,
 		bool subscribed,
 		bool communityMember,
-		bool hidden);
+		bool hidden,
+		Data::LastSeenBadge lastSeenBadge);
 
 	Key _id;
 	mutable std::unique_ptr<CornerBadgeUserpic> _cornerBadgeUserpic;
