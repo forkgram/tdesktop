@@ -553,6 +553,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_settings_uri_scheme_box_title" = "Custom URI Scheme";
 "lng_settings_uri_scheme_field_label" = "Example: potplayer://.";
 "lng_settings_last_seen_in_dialogs" = "Show last seen time in list of dialogs";
+"lng_settings_colored_last_seen_dots" = "Enable colored last seen dots";
 "lng_settings_search_engine" = "Add a 'Search Selected Text' to Context Menu";
 "lng_settings_search_engine_box_title" = "URL of Search Engine";
 "lng_settings_search_engine_field_label" = "URL must contain '%q'";

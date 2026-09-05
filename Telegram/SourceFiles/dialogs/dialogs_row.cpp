@@ -20,6 +20,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/text/text_options.h"
 #include "ui/text/text_utilities.h"
 #include "ui/painter.h"
+#include "core/application.h"
+#include "core/core_settings.h"
 #include "dialogs/dialogs_entry.h"
 #include "dialogs/ui/dialogs_video_userpic.h"
 #include "dialogs/ui/dialogs_layout.h"
@@ -27,6 +29,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_community.h"
 #include "data/data_folder.h"
 #include "data/data_forum.h"
+#include "data/data_lastseen_badge.h"
 #include "data/data_session.h"
 #include "data/data_stories.h"
 #include "data/data_peer_values.h"
@@ -45,6 +48,24 @@ constexpr auto kHiddenLayer = 2;
 constexpr auto kBottomLayer = 1;
 constexpr auto kNoneLayer = 0;
 constexpr auto kBlurRadius = 24;
+
+[[nodiscard]] Data::LastSeenBadge ResolveLastSeenBadge(
+		not_null<UserData*> user,
+		TimeId now,
+		bool insideCommunity) {
+	if (Data::IsUserOnline(user, now)) {
+		return Data::LastSeenBadge::Online;
+	} else if (insideCommunity
+		|| !Core::App().settings().fork().coloredLastSeenDots()
+		|| user->isSelf()
+		|| user->isBot()
+		|| user->isSupport()
+		|| user->isServiceUser()
+		|| user->linkedCommunityId()) {
+		return Data::LastSeenBadge::None;
+	}
+	return Data::ClassifyLastSeenBadge(user->lastseen(), now);
+}
 
 [[nodiscard]] int SubscriptionCutSkip() {
 	const auto width = st::dialogsSubscriptionBadgeOutlineTwice / 2.;
@@ -283,6 +304,12 @@ bool Row::CornerLayersManager::isSameLayer(Layer layer) const {
 	return isFinished() && (_nextLayer == layer);
 }
 
+bool Row::CornerLayersManager::isFadingOut(Layer layer) const {
+	return (_prevLayer == layer)
+		&& (_nextLayer != layer)
+		&& !isFinished();
+}
+
 void Row::CornerLayersManager::setLayer(
 		Layer layer,
 		Fn<void()> updateCallback) {
@@ -463,7 +490,7 @@ void Row::setCornerBadgeShown(
 	}
 }
 
-void Row::updateCornerBadgeShown(
+Data::LastSeenBadge Row::updateCornerBadgeShown(
 		not_null<PeerData*> peer,
 		Fn<void()> updateCallback,
 		bool hasUnreadBadgesAbove,
@@ -471,12 +498,15 @@ void Row::updateCornerBadgeShown(
 		bool hidden) const {
 	const auto user = peer->asUser();
 	const auto now = user ? base::unixtime::now() : TimeId();
+	const auto lastSeenBadge = user
+		? ResolveLastSeenBadge(user, now, insideCommunity)
+		: Data::LastSeenBadge::None;
 	const auto channel = user ? nullptr : peer->asChannel();
 	const auto nextLayer = [&] {
 		if (hasUnreadBadgesAbove) {
 			return kNoneLayer;
 		} else if (user
-			&& (Data::IsUserOnline(user, now)
+			&& (lastSeenBadge != Data::LastSeenBadge::None
 				|| (!insideCommunity && user->linkedCommunityId()))) {
 			return kTopLayer;
 		} else if (channel
@@ -492,9 +522,14 @@ void Row::updateCornerBadgeShown(
 		return kNoneLayer;
 	}();
 	setCornerBadgeShown(nextLayer, std::move(updateCallback));
-	if ((nextLayer == kTopLayer) && user) {
+	if (nextLayer != kTopLayer || !user) {
+		return Data::LastSeenBadge::None;
+	} else if (lastSeenBadge == Data::LastSeenBadge::Online) {
 		peer->owner().watchForOffline(user, now);
+	} else if (lastSeenBadge != Data::LastSeenBadge::None) {
+		peer->owner().watchForLastSeenBadgeChange(user, now);
 	}
+	return lastSeenBadge;
 }
 
 void Row::ensureCornerBadgeUserpic() const {
@@ -514,7 +549,8 @@ void Row::PaintCornerBadgeFrame(
 		const Ui::PaintContext &context,
 		bool subscribed,
 		bool communityMember,
-		bool hidden) {
+		bool hidden,
+		Data::LastSeenBadge lastSeenBadge) {
 	data->frame.fill(Qt::transparent);
 
 	Painter q(&data->frame);
@@ -689,9 +725,23 @@ void Row::PaintCornerBadgeFrame(
 	auto pen = QPen(Qt::transparent);
 	pen.setWidthF(stroke * topLayerProgress);
 	q.setPen(pen);
-	q.setBrush(data->active
-		? st::dialogsOnlineBadgeFgActive
-		: st::dialogsOnlineBadgeFg);
+	const auto badgeBrush = [&] {
+		switch (lastSeenBadge) {
+		case Data::LastSeenBadge::Recent:
+			return st::dialogsLastSeenBadgeRecent->b;
+		case Data::LastSeenBadge::Moderate:
+			return st::dialogsLastSeenBadgeModerate->b;
+		case Data::LastSeenBadge::Stale:
+			return st::dialogsLastSeenBadgeStale->b;
+		case Data::LastSeenBadge::None:
+		case Data::LastSeenBadge::Online:
+			return data->active
+				? st::dialogsOnlineBadgeFgActive->b
+				: st::dialogsOnlineBadgeFg->b;
+		}
+		Unexpected("LastSeenBadge value in PaintCornerBadgeFrame.");
+	}();
+	q.setBrush(badgeBrush);
 	q.drawEllipse(QRectF(
 		photoSize - skip.x() - size,
 		photoSize - skip.y() - size,
@@ -727,14 +777,14 @@ void Row::paintUserpic(
 	const auto hidden = peer
 		&& context.community
 		&& context.community->isHidden(peer);
-	if (peer) {
-		updateCornerBadgeShown(
+	const auto lastSeenBadge = peer
+		? updateCornerBadgeShown(
 			peer,
 			nullptr,
 			hasUnreadBadgesAbove,
 			insideCommunity,
-			hidden);
-	}
+			hidden)
+		: Data::LastSeenBadge::None;
 
 	const auto cornerBadgeShown = !_cornerBadgeUserpic
 		? _cornerBadgeShown
@@ -801,6 +851,13 @@ void Row::paintUserpic(
 	const auto paletteVersionReal = style::PaletteVersion();
 	const auto paletteVersion = (paletteVersionReal & ((1 << 17) - 1));
 	const auto active = context.active ? 1 : 0;
+	const auto lastSeenBadgeValue = uint8(lastSeenBadge);
+	const auto fadingOutLastSeenBadge = (lastSeenBadge
+		== Data::LastSeenBadge::None)
+		&& _cornerBadgeUserpic->layersManager.isFadingOut(kTopLayer);
+	const auto paintedLastSeenBadge = fadingOutLastSeenBadge
+		? Data::LastSeenBadge(_cornerBadgeUserpic->lastSeenBadge)
+		: lastSeenBadge;
 	const auto keyChanged = (_cornerBadgeUserpic->key != key)
 		|| (_cornerBadgeUserpic->paletteVersion != paletteVersion);
 	if (keyChanged) {
@@ -824,6 +881,7 @@ void Row::paintUserpic(
 		|| !_cornerBadgeUserpic->layersManager.isFinished()
 		|| (activeMatters && _cornerBadgeUserpic->active != active)
 		|| _cornerBadgeUserpic->hidden != (hidden ? 1 : 0)
+		|| _cornerBadgeUserpic->lastSeenBadge != lastSeenBadgeValue
 		|| _cornerBadgeUserpic->frameIndex != frameIndex
 		|| _cornerBadgeUserpic->storiesCount != storiesCount
 		|| _cornerBadgeUserpic->storiesUnreadCount != storiesUnreadCount
@@ -833,6 +891,9 @@ void Row::paintUserpic(
 		_cornerBadgeUserpic->paletteVersion = paletteVersion;
 		_cornerBadgeUserpic->active = active;
 		_cornerBadgeUserpic->hidden = hidden ? 1 : 0;
+		if (!fadingOutLastSeenBadge) {
+			_cornerBadgeUserpic->lastSeenBadge = lastSeenBadgeValue;
+		}
 		_cornerBadgeUserpic->storiesCount = storiesCount;
 		_cornerBadgeUserpic->storiesUnreadCount = storiesUnreadCount;
 		_cornerBadgeUserpic->storiesHasVideoStream = storiesHasVideoStream;
@@ -848,7 +909,8 @@ void Row::paintUserpic(
 			context,
 			subscribed,
 			communityMember,
-			hidden);
+			hidden,
+			paintedLastSeenBadge);
 	}
 	p.drawImage(
 		context.st->padding.left() - framePadding,

@@ -466,6 +466,16 @@ void BuildForkSectionContent(SectionBuilder &builder) {
 		});
 
 	//
+	add(
+		u"fork/colored_last_seen_dots"_q,
+		{ u"colored"_q, u"last"_q, u"seen"_q, u"dots"_q, u"online"_q },
+		tr::lng_settings_colored_last_seen_dots(),
+		[] { return Core::App().settings().fork().coloredLastSeenDots(); },
+		[=](bool checked) {
+			Core::App().settings().fork().setColoredLastSeenDots(checked);
+		});
+
+	//
 	addWithBox(
 		u"fork/custom_search"_q,
 		{ u"custom"_q, u"search"_q, u"engine"_q },

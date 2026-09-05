@@ -331,6 +331,7 @@ Session::Session(not_null<Main::Session*> session)
 , _clearPhotoCacheDelayed([=] { clearScheduledPhotoCache(); })
 , _pollsClosingTimer([=] { checkPollsClosings(); })
 , _watchForOfflineTimer([=] { checkLocalUsersWentOffline(); })
+, _watchForLastSeenBadgeChangeTimer([=] { checkLastSeenBadgeChanges(); })
 , _groups(this)
 , _aiComposeTones(std::make_unique<AiComposeTones>(session))
 , _chatsFilters(std::make_unique<ChatFilters>(this))
@@ -1527,6 +1528,37 @@ void Session::maybeStopWatchForOffline(not_null<UserData*> user) {
 	}
 }
 
+void Session::watchForLastSeenBadgeChange(
+		not_null<UserData*> user,
+		TimeId now) {
+	if (!now) {
+		now = base::unixtime::now();
+	}
+	const auto lastseen = user->lastseen();
+	const auto badge = Data::ClassifyLastSeenBadge(lastseen, now);
+	if (badge == LastSeenBadge::None || badge == LastSeenBadge::Online) {
+		return;
+	}
+	const auto &[i, ok] = _watchingForLastSeenBadgeChange.emplace(
+		user,
+		badge);
+	if (!ok) {
+		if (i->second != badge) {
+			i->second = badge;
+		}
+	}
+	const auto next = Data::NextLastSeenBadgeChange(lastseen, now);
+	const auto timeout = (next - now) * crl::time(1000);
+	const auto fires = _watchForLastSeenBadgeChangeTimer.isActive()
+		? _watchForLastSeenBadgeChangeTimer.remainingTime()
+		: -1;
+	if (fires >= 0 && fires <= timeout) {
+		return;
+	}
+	_watchForLastSeenBadgeChangeTimer.callOnce(
+		std::max(timeout, crl::time(1)));
+}
+
 void Session::recordSharingDisabledTime(not_null<UserData*> user) {
 	_sharingDisabledTimes[user] = base::unixtime::now();
 }
@@ -1563,6 +1595,42 @@ void Session::checkLocalUsersWentOffline() {
 	}
 	if (!_watchingForOffline.empty()) {
 		_watchForOfflineTimer.callOnce(std::max(minimal, crl::time(1)));
+	}
+}
+
+void Session::checkLastSeenBadgeChanges() {
+	_watchForLastSeenBadgeChangeTimer.cancel();
+
+	auto minimal = 60 * 60 * crl::time(1000);
+	const auto now = base::unixtime::now();
+	auto changed = std::vector<not_null<UserData*>>();
+	for (auto i = begin(_watchingForLastSeenBadgeChange)
+		; i != end(_watchingForLastSeenBadgeChange);) {
+		const auto user = i->first;
+		const auto lastseen = user->lastseen();
+		const auto badge = Data::ClassifyLastSeenBadge(lastseen, now);
+		if (badge != i->second) {
+			changed.push_back(user);
+			i->second = badge;
+		}
+		const auto next = Data::NextLastSeenBadgeChange(lastseen, now);
+		if (!next) {
+			i = _watchingForLastSeenBadgeChange.erase(i);
+		} else {
+			accumulate_min(
+				minimal,
+				(next - now) * crl::time(1000));
+			++i;
+		}
+	}
+	if (!_watchingForLastSeenBadgeChange.empty()) {
+		_watchForLastSeenBadgeChangeTimer.callOnce(
+			std::max(minimal, crl::time(1)));
+	}
+	for (const auto user : changed) {
+		session().changes().peerUpdated(
+			user,
+			PeerUpdate::Flag::OnlineStatus);
 	}
 }
 

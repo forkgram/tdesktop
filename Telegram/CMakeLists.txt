@@ -727,6 +727,8 @@ PRIVATE
     data/data_histories.h
     data/data_history_messages.cpp
     data/data_history_messages.h
+    data/data_lastseen_badge.cpp
+    data/data_lastseen_badge.h
     data/data_lastseen_status.h
     data/data_location.cpp
     data/data_location.h
