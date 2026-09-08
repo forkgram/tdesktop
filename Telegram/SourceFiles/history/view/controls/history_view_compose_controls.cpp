@@ -2732,6 +2732,10 @@ void ComposeControls::init() {
 	initVoiceRecordBar();
 	initKeyHandler();
 	initEditStarsButton();
+	Core::App().settings().fork().hideVoiceVideoButtonChanges(
+	) | rpl::on_next([=] {
+		updateSendButtonType();
+	}, _wrap->lifetime());
 	_minStarsCount.changes() | rpl::on_next([=] {
 		initEditStarsButton();
 		updateControlsGeometry(_wrap->size());
@@ -2936,6 +2940,9 @@ void ComposeControls::orderControls() {
 }
 
 bool ComposeControls::showRecordButton() const {
+	if (Core::App().settings().fork().hideVoiceVideoButton()) {
+		return false;
+	}
 	return _features.recordMediaMessage
 		&& (_recordAvailability != Webrtc::RecordAvailability::None)
 		&& !_voiceRecordBar->isListenState()

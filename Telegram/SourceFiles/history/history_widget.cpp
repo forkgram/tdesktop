@@ -535,6 +535,12 @@ HistoryWidget::HistoryWidget(
 		updateExpandButtonVisibility();
 		updateSendButtonType();
 	}, lifetime());
+
+	Core::App().settings().fork().hideVoiceVideoButtonChanges(
+	) | rpl::on_next([=] {
+		updateSendButtonType();
+	}, lifetime());
+
 #ifdef Q_OS_MAC
 	// Removed an ability to insert text from the menu bar
 	// when the field is hidden.
@@ -6778,6 +6784,9 @@ bool HistoryWidget::isSearching() const {
 }
 
 bool HistoryWidget::showRecordButton() const {
+	if (Core::App().settings().fork().hideVoiceVideoButton()) {
+		return false;
+	}
 	return (_recordAvailability != Webrtc::RecordAvailability::None)
 		&& !_voiceRecordBar->isListenState()
 		&& !_voiceRecordBar->isRecordingByAnotherBar()
