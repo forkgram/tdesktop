@@ -449,7 +449,7 @@ HistoryWidget::HistoryWidget(
 		.history = [=] { return _history; },
 		.canSendMessages = [=] { return _canSendMessages; },
 		.previewShown = [=] { return !!_previewDrawPreview; },
-		.controller = [=] { return this->controller().get(); },
+		.show = [=] { return this->controller()->uiShow(); },
 		.prepareSendAction = [=](Api::SendOptions o) {
 			return prepareSendAction(o);
 		},
@@ -464,6 +464,9 @@ HistoryWidget::HistoryWidget(
 			return _field->getTextWithAppliedMarkdown();
 		},
 		.clearFieldText = [=] { clearFieldText(); },
+		.clearFieldTextUndoable = [=] {
+			clearFieldText({}, FieldHistoryAction::NewEntry);
+		},
 		.saveDraftWithTextNow = [=] { saveDraftWithTextNow(); },
 		.hideSelectorControlsAnimated = [=] {
 			hideSelectorControlsAnimated();

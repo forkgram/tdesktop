@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "api/api_common.h"
 #include "api/api_sending.h"
+#include "chat_helpers/compose/compose_show.h"
 #include "core/application.h"
 #include "data/data_changes.h"
 #include "data/data_chat_participant_status.h"
@@ -23,7 +24,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/lang_keys.h"
 #include "main/main_session.h"
 #include "ui/widgets/buttons.h"
-#include "window/window_session_controller.h"
 
 #include "styles/style_chat_helpers.h"
 
@@ -36,7 +36,14 @@ ExtractMediaBar::ExtractMediaBar(not_null<QWidget*> parent, Hooks hooks)
 	st::historyForkExtractMedia)) {
 	_button->setAccessibleName(
 		tr::lng_fork_extract_media_from_preview(tr::now));
-	_button->addClickHandler([=] { toggle(); });
+	_button->setAcceptBoth(true);
+	_button->addClickHandler([=](Qt::MouseButton button) {
+		if (button == Qt::RightButton) {
+			freezeAndClearField();
+		} else {
+			toggle();
+		}
+	});
 	_button->hide();
 }
 
@@ -104,6 +111,19 @@ void ExtractMediaBar::toggle() {
 	updateIcon();
 }
 
+void ExtractMediaBar::freezeAndClearField() {
+	if (!_active) {
+		toggle();
+		if (!_active) {
+			return;
+		}
+	}
+	if (_hooks.clearFieldTextUndoable) {
+		_hooks.clearFieldTextUndoable();
+		_hooks.saveDraftWithTextNow();
+	}
+}
+
 void ExtractMediaBar::updateVisibility(bool barCancelShown) {
 	const auto avail = available();
 	if (!avail) {
@@ -137,9 +157,9 @@ bool ExtractMediaBar::trySend(Api::SendOptions options) {
 		? Data::RestrictionError(peer, ChatRestriction::SendFiles)
 		: Data::RestrictionError(peer, ChatRestriction::SendPhotos);
 	if (restriction) {
-		Data::ShowSendErrorToast(_hooks.controller(), peer, restriction);
+		Data::ShowSendErrorToast(_hooks.show(), peer, restriction);
 		return false;
-	} else if (_hooks.showSlowmodeError()) {
+	} else if (_hooks.showSlowmodeError && _hooks.showSlowmodeError()) {
 		return false;
 	}
 	auto message = Api::MessageToSend(_hooks.prepareSendAction(options));
@@ -150,11 +170,11 @@ bool ExtractMediaBar::trySend(Api::SendOptions options) {
 		copy.starsApproved = approved;
 		[[maybe_unused]] const auto resent = trySend(copy);
 	};
-	const auto checked = _hooks.checkSendPayment(
-		1,
-		message.action.options,
-		withPaymentApproved);
-	if (!checked) {
+	if (_hooks.checkSendPayment
+		&& !_hooks.checkSendPayment(
+			1,
+			message.action.options,
+			withPaymentApproved)) {
 		return false;
 	}
 

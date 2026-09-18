@@ -81,6 +81,8 @@ struct SetHistoryArgs {
 	Fn<bool()> showSlowmodeError;
 	Fn<bool()> showScheduleSendError;
 	Fn<Api::SendAction()> sendActionFactory;
+	Fn<Api::SendAction(Api::SendOptions)> sendActionWithOptionsFactory;
+	Fn<bool(int, Api::SendOptions, Fn<void(int)>)> checkSendPayment;
 	Fn<void(TextWithEntities, Api::SendOptions, Fn<void()>)> sendWithText;
 	rpl::producer<int> slowmodeSecondsLeft;
 	rpl::producer<bool> sendDisabledBySlowmode;

@@ -89,6 +89,10 @@ class Session;
 struct SendAsKey;
 } // namespace Main
 
+namespace Fork {
+class ExtractMediaBar;
+} // namespace Fork
+
 namespace Iv {
 struct RichPage;
 } // namespace Iv
@@ -219,6 +223,8 @@ public:
 	[[nodiscard]] rpl::producer<> replyCancelled() const;
 	[[nodiscard]] rpl::producer<> replyCancelledExternal() const;
 	[[nodiscard]] rpl::producer<Api::SendOptions> sendRequests() const;
+	[[nodiscard]] bool trySendExtractedMedia(Api::SendOptions options);
+	[[nodiscard]] bool extractMediaActive() const;
 	[[nodiscard]] rpl::producer<VoiceToSend> sendVoiceRequests() const;
 	[[nodiscard]] rpl::producer<QString> sendCommandRequests() const;
 	[[nodiscard]] rpl::producer<MessageToEdit> editRequests() const;
@@ -543,6 +549,8 @@ private:
 	Fn<bool()> _showSlowmodeError;
 	Fn<bool()> _showScheduleSendError;
 	Fn<Api::SendAction()> _sendActionFactory;
+	Fn<Api::SendAction(Api::SendOptions)> _sendActionWithOptionsFactory;
+	Fn<bool(int, Api::SendOptions, Fn<void(int)>)> _checkSendPayment;
 	Fn<void(TextWithEntities, Api::SendOptions, Fn<void()>)> _sendWithText;
 	rpl::variable<int> _slowmodeSecondsLeft;
 	rpl::variable<bool> _sendDisabledBySlowmode;
@@ -555,6 +563,8 @@ private:
 	const std::unique_ptr<Ui::RpWidget> _wrap;
 	std::unique_ptr<Ui::RpWidget> _writeRestricted;
 	rpl::event_stream<FullReplyTo> _jumpToItemRequests;
+
+	std::unique_ptr<Fork::ExtractMediaBar> _forkExtractMedia;
 
 	std::optional<Ui::RoundRect> _backgroundRect;
 

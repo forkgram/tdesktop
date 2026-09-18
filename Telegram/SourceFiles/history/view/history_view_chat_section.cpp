@@ -1567,6 +1567,15 @@ void ChatWidget::setupComposeControls() {
 		.showSlowmodeError = [=] { return showSlowmodeError(); },
 		.showScheduleSendError = [=] { return showScheduleSendError(); },
 		.sendActionFactory = [=] { return prepareSendAction({}); },
+		.sendActionWithOptionsFactory = [=](Api::SendOptions options) {
+			return prepareSendAction(options);
+		},
+		.checkSendPayment = [=](
+				int count,
+				Api::SendOptions options,
+				Fn<void(int)> done) {
+			return checkSendPayment(count, options, std::move(done));
+		},
 		.sendWithText = [=](
 				TextWithEntities &&text,
 				Api::SendOptions options,
@@ -2388,6 +2397,10 @@ void ChatWidget::send(Api::SendOptions options) {
 			&& showSlowmodeError()) {
 			return;
 		}
+	}
+
+	if (_composeControls->trySendExtractedMedia(options)) {
+		return;
 	}
 
 	sendTextWithTags(

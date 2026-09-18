@@ -21,13 +21,13 @@ namespace HistoryView::Controls {
 class WebpageProcessor;
 } // namespace HistoryView::Controls
 
+namespace ChatHelpers {
+class Show;
+} // namespace ChatHelpers
+
 namespace Ui {
 class IconButton;
 } // namespace Ui
-
-namespace Window {
-class SessionController;
-} // namespace Window
 
 namespace Fork {
 
@@ -39,12 +39,13 @@ public:
 		Fn<History*()> history;
 		Fn<bool()> canSendMessages;
 		Fn<bool()> previewShown;
-		Fn<Window::SessionController*()> controller;
+		Fn<std::shared_ptr<ChatHelpers::Show>()> show;
 		Fn<Api::SendAction(Api::SendOptions)> prepareSendAction;
 		Fn<bool(int, Api::SendOptions, Fn<void(int)>)> checkSendPayment;
 		Fn<bool()> showSlowmodeError;
 		Fn<TextWithTags()> currentTextWithTags;
 		Fn<void()> clearFieldText;
+		Fn<void()> clearFieldTextUndoable;
 		Fn<void()> saveDraftWithTextNow;
 		Fn<void()> hideSelectorControlsAnimated;
 		Fn<void()> setInnerFocus;
@@ -63,6 +64,7 @@ public:
 	[[nodiscard]] bool trySend(Api::SendOptions options);
 
 private:
+	void freezeAndClearField();
 	[[nodiscard]] bool available() const;
 	[[nodiscard]] WebPageData *currentData() const;
 	void updateIcon();

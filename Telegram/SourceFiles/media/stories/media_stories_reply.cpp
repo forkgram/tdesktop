@@ -268,6 +268,9 @@ void ReplyArea::send(Api::SendOptions options) {
 		}
 		return;
 	}
+	if (_controls->trySendExtractedMedia(options)) {
+		return;
+	}
 	const auto webPageDraft = _controls->webPageDraft();
 
 	auto message = Api::MessageToSend(prepareSendAction(options));
@@ -900,6 +903,15 @@ void ReplyArea::show(
 		.videoStream = _data.videoStream,
 		.showSlowmodeError = [=] { return showSlowmodeError(); },
 		.sendActionFactory = [=] { return prepareSendAction({}); },
+		.sendActionWithOptionsFactory = [=](Api::SendOptions options) {
+			return prepareSendAction(options);
+		},
+		.checkSendPayment = [=](
+				int count,
+				Api::SendOptions options,
+				Fn<void(int)> done) {
+			return checkSendPayment(count, options, std::move(done));
+		},
 		.slowmodeSecondsLeft = SlowmodeSecondsLeft(history->peer),
 		.sendDisabledBySlowmode = SendDisabledBySlowmode(history->peer),
 		.liked = std::move(

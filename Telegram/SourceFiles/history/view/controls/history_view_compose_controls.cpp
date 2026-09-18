@@ -52,6 +52,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_user.h"
 #include "data/data_chat.h"
 #include "data/data_channel.h"
+#include "data/data_chat_participant_status.h"
 #include "data/data_file_origin.h"
 #include "data/data_forum.h"
 #include "data/data_forum_topic.h"
@@ -79,6 +80,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history_streamed_drafts.h"
 #include "history/history_item_components.h"
 #include "history/history_item_helpers.h"
+#include "history/history_widget_extract_media_fork.h"
 #include "history/view/controls/history_view_characters_limit.h"
 #include "history/view/controls/history_view_compose_ai_button.h"
 #include "history/view/controls/history_view_compose_ai_tooltip.h"
@@ -228,6 +230,8 @@ public:
 		Data::ResolvedForwardDraft items);
 	void previewReady(rpl::producer<Controls::WebpageParsed> parsed);
 	void previewUnregister();
+	void setExtractMediaButton(Ui::IconButton *button);
+	[[nodiscard]] int rightControlsWidth() const;
 
 	void mediaEditManagerApply(SendMenu::Action action);
 	[[nodiscard]] bool mediaEditCoverUploading() const;
@@ -342,6 +346,7 @@ private:
 
 	const not_null<Data::Session*> _data;
 	const not_null<Ui::IconButton*> _cancel;
+	Ui::IconButton *_extractMedia = nullptr;
 
 	QRect _clickableRect;
 	QRect _shownMessagePreviewRect;
@@ -685,6 +690,18 @@ void FieldHeader::previewUnregister() {
 	_previewLifetime.destroy();
 }
 
+void FieldHeader::setExtractMediaButton(Ui::IconButton *button) {
+	_extractMedia = button;
+	updateControlsGeometry(size());
+}
+
+int FieldHeader::rightControlsWidth() const {
+	return _cancel->width()
+		+ ((_extractMedia && !_extractMedia->isHidden())
+			? _extractMedia->width()
+			: 0);
+}
+
 void FieldHeader::mediaEditManagerApply(SendMenu::Action action) {
 	_mediaEditManager.apply(action, _show);
 }
@@ -709,7 +726,7 @@ void FieldHeader::paintWebPage(Painter &p, not_null<PeerData*> context) {
 	}
 	const auto elidedWidth = width()
 		- previewLeft
-		- _cancel->width()
+		- rightControlsWidth()
 		- st::msgReplyPadding.right();
 
 	p.setPen(st::historyReplyNameFg);
@@ -992,6 +1009,9 @@ SuggestOptions FieldHeader::suggestOptions() const {
 
 void FieldHeader::updateControlsGeometry(QSize size) {
 	_cancel->moveToRight(0, 0);
+	if (_extractMedia) {
+		_extractMedia->moveToRight(_cancel->width(), 0);
+	}
 	_clickableRect = QRect(
 		0,
 		0,
@@ -1495,6 +1515,9 @@ void ComposeControls::setHistory(SetHistoryArgs &&args) {
 	_showSlowmodeError = std::move(args.showSlowmodeError);
 	_showScheduleSendError = std::move(args.showScheduleSendError);
 	_sendActionFactory = std::move(args.sendActionFactory);
+	_sendActionWithOptionsFactory = std::move(
+		args.sendActionWithOptionsFactory);
+	_checkSendPayment = std::move(args.checkSendPayment);
 	_sendWithText = std::move(args.sendWithText);
 	_slowmodeSecondsLeft = rpl::single(0)
 		| rpl::then(std::move(args.slowmodeSecondsLeft));
@@ -1515,6 +1538,7 @@ void ComposeControls::setHistory(SetHistoryArgs &&args) {
 	}
 	untrackThreadFieldVisibility();
 	unregisterDraftSources();
+	_forkExtractMedia->reset();
 	_history = history;
 	_fieldDisabled = nullptr;
 	_topicRootId = args.topicRootId;
@@ -2194,6 +2218,14 @@ rpl::producer<Api::SendOptions> ComposeControls::scrollToMaxRequests() const {
 	return _scrollToMaxRequests.events();
 }
 
+bool ComposeControls::trySendExtractedMedia(Api::SendOptions options) {
+	return _forkExtractMedia && _forkExtractMedia->trySend(options);
+}
+
+bool ComposeControls::extractMediaActive() const {
+	return _forkExtractMedia && _forkExtractMedia->active();
+}
+
 rpl::producer<Api::SendOptions> ComposeControls::sendRequests() const {
 	return sendContentRequests(
 		SendRequestType::Text
@@ -2811,6 +2843,48 @@ void ComposeControls::show() {
 }
 
 void ComposeControls::init() {
+	_forkExtractMedia = std::make_unique<Fork::ExtractMediaBar>(
+		_header.get(),
+		Fork::ExtractMediaBar::Hooks{
+			.preview = [=] { return _preview.get(); },
+			.peer = [=] {
+				return _history ? _history->peer.get() : nullptr;
+			},
+			.history = [=] { return _history; },
+			.canSendMessages = [=] {
+				return _history && Data::CanSendAnything(_history->peer);
+			},
+			.previewShown = [=] { return _previewShown; },
+			.show = [=] { return _show; },
+			.prepareSendAction = [=](Api::SendOptions options) {
+				return _sendActionWithOptionsFactory
+					? _sendActionWithOptionsFactory(options)
+					: Api::SendAction(_history, options);
+			},
+			.checkSendPayment = [=](
+					int count,
+					Api::SendOptions options,
+					Fn<void(int)> done) {
+				return _checkSendPayment
+					? _checkSendPayment(count, options, std::move(done))
+					: true;
+			},
+			.showSlowmodeError = [=] {
+				return _showSlowmodeError && _showSlowmodeError();
+			},
+			.currentTextWithTags = [=] {
+				return getTextWithAppliedMarkdown();
+			},
+			.clearFieldText = [=] { clearFieldText(); },
+			.clearFieldTextUndoable = [=] {
+				clearFieldText({}, FieldHistoryAction::NewEntry);
+			},
+			.saveDraftWithTextNow = [=] { saveDraftWithTextNow(); },
+			.hideSelectorControlsAnimated = [=] { hidePanelsAnimated(); },
+			.setInnerFocus = [=] { focus(); },
+		});
+	_header->setExtractMediaButton(_forkExtractMedia->button());
+
 	if (_attachToggle) {
 		_attachToggle->setAccessibleName(tr::lng_attach(tr::now));
 	}
@@ -2950,6 +3024,7 @@ void ComposeControls::init() {
 
 	_header->previewCancelled(
 	) | rpl::on_next([=] {
+		_forkExtractMedia->reset();
 		if (_preview) {
 			_preview->apply({ .removed = true });
 		}
@@ -3036,6 +3111,7 @@ bool ComposeControls::showRecordButton() const {
 		&& !_voiceRecordBar->isListenState()
 		&& !_voiceRecordBar->isRecordingByAnotherBar()
 		&& !hasSendableContent()
+		&& !_previewShown
 		&& (replyingToMessage().replying() || !readyToForward())
 		&& !isEditingMessage();
 }
@@ -6119,6 +6195,7 @@ void ComposeControls::initWebpageProcess() {
 	if (!_history) {
 		_preview = nullptr;
 		_previewShown = false;
+		_forkExtractMedia->updateVisibility(false);
 		_header->previewUnregister();
 		return;
 	}
@@ -6128,8 +6205,13 @@ void ComposeControls::initWebpageProcess() {
 		_field);
 
 	_preview->parsedValue(
-	) | rpl::on_next([=](Controls::WebpageParsed parsed) {
+	) | rpl::filter([=](const Controls::WebpageParsed &) {
+		return !_forkExtractMedia->blocksPreviewUpdates();
+	}) | rpl::on_next([=](Controls::WebpageParsed parsed) {
 		_previewShown = !!parsed;
+		// Without the send hook the owner can't send the extracted media.
+		_forkExtractMedia->updateVisibility(_previewShown
+			&& (_sendActionWithOptionsFactory != nullptr));
 	}, _historyLifetime);
 
 	_preview->repaintRequests(
@@ -6214,7 +6296,10 @@ void ComposeControls::initWebpageProcess() {
 		}, _historyLifetime);
 	}
 
-	_header->previewReady(_preview->parsedValue());
+	_header->previewReady(_preview->parsedValue(
+	) | rpl::filter([=](const Controls::WebpageParsed &) {
+		return !_forkExtractMedia->blocksPreviewUpdates();
+	}));
 }
 
 void ComposeControls::initForwardProcess() {
