@@ -49,6 +49,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/application.h"
 #include "core/core_settings.h"
 #include "core/file_utilities.h"
+#include "forkgram/link_replacements.h"
+#include "forkgram/link_replacements_box.h"
 #include "lang/lang_keys.h"
 #include "main/main_domain.h"
 #include "main/main_session.h"
@@ -59,6 +61,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_layers.h"
 #include "styles/style_settings.h"
 #include "ui/boxes/confirm_box.h"
+#include "ui/layers/generic_box.h"
 #include "ui/text/text_utilities.h"
 #include "ui/vertical_list.h"
 #include "ui/widgets/checkbox.h"
@@ -583,6 +586,30 @@ void BuildForkSectionContent(SectionBuilder &builder) {
 			u"clipboard"_q,
 			u"save"_q,
 			u"text"_q,
+		},
+	});
+
+	//
+	builder.addButton({
+		.id = u"fork/link_replacements"_q,
+		.title = tr::lng_fork_link_replacements(),
+		.st = &st::settingsButton,
+		.icon = { &st::menuIconLinks },
+		.label = rpl::single(rpl::empty_value()) | rpl::then(
+			Forkgram::LinkReplacements::Changes()
+		) | rpl::map([] {
+			return Forkgram::LinkReplacements::Enabled()
+				? QString::number(Forkgram::LinkReplacements::EnabledCount())
+				: tr::lng_settings_cloud_password_off(tr::now);
+		}),
+		.onClick = [=] {
+			controller->show(Box(Forkgram::LinkReplacementsBox));
+		},
+		.keywords = {
+			u"link"_q,
+			u"replace"_q,
+			u"paste"_q,
+			u"regex"_q,
 		},
 	});
 

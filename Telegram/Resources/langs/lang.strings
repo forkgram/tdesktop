@@ -573,6 +573,19 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 "lng_fork_extract_media_from_preview" = "Send media from link preview as attachment";
 
+"lng_fork_link_replacements" = "Replace links on paste";
+"lng_fork_link_replacements_about" = "Links you paste into a message are rewritten by the rules below. Useful for services whose previews Telegram cannot render.";
+"lng_fork_link_replacements_rules" = "Replacement rules";
+"lng_fork_link_replacements_rules_about" = "Each rule is a regular expression and the text that replaces a match. Use $1 to insert a captured group.";
+"lng_fork_link_replacements_add" = "Add rule";
+"lng_fork_link_replacements_edit" = "Edit rule";
+"lng_fork_link_replacements_find" = "Find";
+"lng_fork_link_replacements_replace" = "Replace with";
+"lng_fork_link_replacements_invalid" = "Invalid expression";
+"lng_fork_link_replacements_reset" = "Reset";
+"lng_fork_link_replaced" = "Link replaced";
+"lng_fork_link_replaced_undo" = "Undo";
+
 "lng_settings_custom_sticker_size" = "Custom Sticker Size";
 "lng_settings_sticker_size_label" = "Allowed values are between 50 and 256.";
 

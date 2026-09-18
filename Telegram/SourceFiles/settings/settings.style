@@ -61,6 +61,8 @@ settingsExperimentalAbout: FlatLabel(defaultFlatLabel) {
 }
 settingsExperimentalTitlePadding: margins(22px, 9px, 66px, 1px);
 settingsExperimentalAboutPadding: margins(22px, 0px, 66px, 9px);
+settingsForkRuleTitlePadding: margins(22px, 9px, 78px, 1px);
+settingsForkRuleAboutPadding: margins(22px, 0px, 78px, 9px);
 settingsOptionDisabled: SettingsButton(settingsButtonNoIcon) {
 	textFg: windowSubTextFg;
 	textFgOver: windowSubTextFg;

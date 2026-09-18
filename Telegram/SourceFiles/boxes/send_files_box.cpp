@@ -27,6 +27,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "chat_helpers/tabbed_selector.h"
 #include "editor/photo_editor_layer_widget.h"
 #include "editor/video/video_editor_layer.h"
+#include "forkgram/link_replacements.h"
 #include "history/history_drag_area.h"
 #include "history/view/controls/history_view_characters_limit.h"
 #include "history/view/controls/history_view_compose_ai_button.h"
@@ -2099,7 +2100,7 @@ void SendFilesBox::setupCaption() {
 		requestToTakeTextWithTags();
 		closeBox();
 	}, _caption->lifetime());
-	_caption->setMimeDataHook([=](
+	_caption->setMimeDataHook(Forkgram::LinkReplacements::WrappedMimeHook([=](
 			not_null<const QMimeData*> data,
 			Ui::InputField::MimeAction action) {
 		if (action == Ui::InputField::MimeAction::Check) {
@@ -2108,7 +2109,7 @@ void SendFilesBox::setupCaption() {
 			return addFiles(data);
 		}
 		Unexpected("action in MimeData hook.");
-	});
+	}, _caption.data()));
 
 	updateCaptionVisibility();
 	setupEmojiPanel();

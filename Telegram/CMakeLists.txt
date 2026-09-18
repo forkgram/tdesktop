@@ -921,6 +921,10 @@ PRIVATE
     export/view/export_view_top_bar.h
     forkgram/gpu_demo_renderer.cpp
     forkgram/gpu_demo_renderer.h
+    forkgram/link_replacements.cpp
+    forkgram/link_replacements.h
+    forkgram/link_replacements_box.cpp
+    forkgram/link_replacements_box.h
     forkgram/uri_menu.cpp
     forkgram/uri_menu.h
     history/admin_log/history_admin_log_filter.cpp
