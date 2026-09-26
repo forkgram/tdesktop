@@ -6229,6 +6229,61 @@ bool ChatWidget::searchInChatEmbedded(
 		QString query,
 		Dialogs::Key chat,
 		PeerData *searchFrom) {
+	// WHY: a window without a chats list can only search embedded, and without
+	// an explicit top message id that searches the whole peer instead of here.
+	if (const auto topic = chat.topic()) {
+		if (!(_repliesRootId
+			&& (topic == _topic
+				|| topic->rootId() == _repliesRootId))) {
+			return false;
+		} else if (_composeSearch) {
+			_composeSearch->setQuery(query);
+			_composeSearch->setInnerFocus();
+			return true;
+		}
+		const auto search = crl::guard(this, [=] {
+			const auto update = [=] {
+				if (_composeSearch) {
+					_composeControls->hide();
+				} else {
+					_composeControls->show();
+				}
+				updateBotKeyboard();
+				updateControlsGeometry();
+			};
+			_composeSearch = std::make_unique<ComposeSearch>(
+				this,
+				controller(),
+				_history,
+				searchFrom,
+				query);
+			_composeSearch->setTopMsgId(topic->rootId());
+
+			update();
+			doSetInnerFocus();
+
+			using Activation = ComposeSearch::Activation;
+			_composeSearch->activations(
+			) | rpl::on_next([=](Activation activation) {
+				auto params = Window::SectionShow();
+				params.highlight = Window::SearchHighlightId(
+					activation.query);
+				showAtPosition(activation.item->position(), {}, params);
+			}, _composeSearch->lifetime());
+
+			_composeSearch->destroyRequests(
+			) | rpl::take(1) | rpl::on_next([=] {
+				_composeSearch = nullptr;
+
+				update();
+				doSetInnerFocus();
+			}, _composeSearch->lifetime());
+		});
+		if (!preventsClose(search)) {
+			search();
+		}
+		return true;
+	}
 	const auto sublist = chat.sublist();
 	if (!sublist) {
 		if ((mode() != Mode::History) || (chat.history() != _history)) {
