@@ -428,6 +428,16 @@ void BuildForkSectionContent(SectionBuilder &builder) {
 		});
 
 	//
+	add(
+		u"fork/restore_playing_audio"_q,
+		{ u"restore"_q, u"playing"_q, u"audio"_q, u"player"_q },
+		tr::lng_settings_restore_playing_audio(),
+		[] { return Core::App().settings().fork().restorePlayingAudio(); },
+		[=](bool checked) {
+			Core::App().settings().fork().setRestorePlayingAudio(checked);
+		});
+
+	//
 	addWithBox(
 		u"fork/uri_scheme"_q,
 		{ u"URI"_q, u"scheme"_q, u"custom link"_q },

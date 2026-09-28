@@ -549,6 +549,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_settings_section_fork" = "Fork Settings";
 "lng_settings_square_avatats" = "Square avatars";
 "lng_settings_audio_fade" = "Audio fade";
+"lng_settings_restore_playing_audio" = "Restore playing audio file after restart";
 "lng_settings_uri_scheme" = "Open links with custom URI Scheme";
 "lng_settings_uri_scheme_box_title" = "Custom URI Scheme";
 "lng_settings_uri_scheme_field_label" = "Example: potplayer://.";

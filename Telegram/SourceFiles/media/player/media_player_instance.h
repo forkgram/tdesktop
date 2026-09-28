@@ -46,6 +46,10 @@ namespace base {
 class PowerSaveBlocker;
 } // namespace base
 
+namespace Main {
+class Session;
+} // namespace Main
+
 namespace Media {
 namespace Player {
 
@@ -189,6 +193,10 @@ public:
 	}
 	void stopAndClose();
 
+	// Restores the audio file that was playing before the last quit
+	// into the mini player, paused at the saved position.
+	void restoreLastPlayed(not_null<Main::Session*> session);
+
 private:
 	using SharedMediaType = Storage::SharedMediaType;
 	using SliceKey = SparseIdsMergedSlice::Key;
@@ -242,7 +250,10 @@ private:
 	void setupShortcuts();
 	void playStreamed(
 		const AudioMsgId &audioId,
-		std::shared_ptr<Streaming::Document> shared);
+		std::shared_ptr<Streaming::Document> shared,
+		crl::time position = -1,
+		bool paused = false);
+	void restorePaused(const AudioMsgId &audioId);
 	Streaming::PlaybackOptions streamingOptions(
 		const AudioMsgId &audioId,
 		crl::time position = -1);
@@ -343,6 +354,7 @@ private:
 	Data _voiceData;
 	std::unique_ptr<MusicListenTracker> _listenTracker;
 	bool _roundPlaying = false;
+	bool _restoreLastPlayedStarted = false;
 
 	rpl::event_stream<Switch> _switchToNext;
 	rpl::event_stream<AudioMsgId::Type> _tracksFinished;

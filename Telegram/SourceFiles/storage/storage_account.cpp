@@ -3843,4 +3843,17 @@ void Account::writePrefImpl<bool>(std::string_view key, bool value) {
 	writePrefGeneric(key, value ? "\x1"_q : QByteArray());
 }
 
+template <>
+std::optional<QByteArray> Account::readPrefImpl<QByteArray>(
+		std::string_view key) {
+	return readPrefGeneric(key);
+}
+
+template <>
+void Account::writePrefImpl<QByteArray>(
+		std::string_view key,
+		QByteArray value) {
+	writePrefGeneric(key, value);
+}
+
 } // namespace Storage

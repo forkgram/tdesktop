@@ -29,7 +29,8 @@ QByteArray ForkSettings::serialize() const {
 		+ Serialize::stringSize(_searchEngineUrl)
 		+ sizeof(qint32) * 13
 		+ sizeof(qint32) * 2
-		+ Serialize::stringSize(_botsPlatforms);
+		+ Serialize::stringSize(_botsPlatforms)
+		+ sizeof(qint32);
 
 	auto result = QByteArray();
 	result.reserve(size);
@@ -62,6 +63,7 @@ QByteArray ForkSettings::serialize() const {
 			<< _botsPlatforms
 			<< qint32(_archivedStoriesAreHidden ? 1 : 0)
 			<< qint32(_hideFromBlockedUsers ? 1 : 0)
+			<< qint32(_restorePlayingAudio ? 1 : 0)
 			;
 	}
 	return result;
@@ -99,6 +101,7 @@ void ForkSettings::addFromSerialized(const QByteArray &serialized) {
 	qint32 additionalButtonsWebBot = _additionalButtonsWebBot;
 	qint32 archivedStoriesAreHidden = _archivedStoriesAreHidden;
 	qint32 hideFromBlockedUsers = _hideFromBlockedUsers;
+	qint32 restorePlayingAudio = _restorePlayingAudio;
 	QString botsPlatforms = _botsPlatforms;
 
 	if (!stream.atEnd()) {
@@ -150,6 +153,9 @@ void ForkSettings::addFromSerialized(const QByteArray &serialized) {
 	if (!stream.atEnd()) {
 		stream >> hideFromBlockedUsers;
 	}
+	if (!stream.atEnd()) {
+		stream >> restorePlayingAudio;
+	}
 	if (stream.status() != QDataStream::Ok) {
 		LOG(("App Error: "
 			"Bad data for Core::ForkSettings::constructFromSerialized()"));
@@ -181,6 +187,7 @@ void ForkSettings::addFromSerialized(const QByteArray &serialized) {
 	_additionalButtonsWebBot = (additionalButtonsWebBot == 1);
 	_archivedStoriesAreHidden = (archivedStoriesAreHidden == 1);
 	setHideFromBlockedUsers(hideFromBlockedUsers == 1);
+	_restorePlayingAudio = (restorePlayingAudio == 1);
 	_botsPlatforms = std::move(botsPlatforms);
 }
 
@@ -206,6 +213,7 @@ void ForkSettings::resetOnLastLogout() {
 	_additionalButtonsWebBot = false;
 	_archivedStoriesAreHidden = false;
 	setHideFromBlockedUsers(false);
+	setRestorePlayingAudio(true);
 	_botsPlatforms = QString();
 }
 
@@ -278,6 +286,13 @@ void ForkSettings::setArchivedStoriesAreHidden(bool newValue) {
 void ForkSettings::setHideFromBlockedUsers(bool newValue) {
 	StaticHideFromBlockedUsers = newValue;
 	_hideFromBlockedUsers = newValue;
+}
+
+[[nodiscard]] bool ForkSettings::restorePlayingAudio() const {
+	return _restorePlayingAudio;
+}
+void ForkSettings::setRestorePlayingAudio(bool newValue) {
+	_restorePlayingAudio = newValue;
 }
 
 } // namespace Core

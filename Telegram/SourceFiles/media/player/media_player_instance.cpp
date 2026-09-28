@@ -7,7 +7,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "media/player/media_player_instance.h"
 
+#include "apiwrap.h"
 #include "data/data_document.h"
+#include "data/data_peer.h"
+#include "data/data_peer_id.h"
 #include "data/data_session.h"
 #include "data/data_changes.h"
 #include "data/data_streaming.h"
@@ -73,6 +76,94 @@ base::options::toggle OptionDisableAutoplayNext({
 		&& !document->isVideoMessage())
 		? Core::App().settings().audioPlaybackSpeed()
 		: Core::App().settings().voicePlaybackSpeed();
+}
+
+// The audio file that was playing the last time, if it was not stopped.
+constexpr auto kLastPlayedAudioPref = "last_played_audio";
+
+// Cache of what is already written to the local storage, so that writing
+// it on every playback state update is avoided.
+std::optional<FullMsgId> LastPlayedAudioSaved;
+Main::Session *LastPlayedAudioSession = nullptr;
+
+struct LastPlayedAudio {
+	FullMsgId itemId;
+	QString username;
+};
+
+[[nodiscard]] std::optional<LastPlayedAudio> ReadLastPlayedAudio(
+		not_null<Main::Session*> session) {
+	const auto serialized = session->local().readPref<QByteArray>(
+		kLastPlayedAudioPref);
+	if (serialized.isEmpty()) {
+		return std::nullopt;
+	}
+	auto stream = QDataStream(serialized);
+	stream.setVersion(QDataStream::Qt_5_1);
+	auto peerIdSerialized = quint64(0);
+	auto msgIdBare = qint64(0);
+	auto type = qint32(0);
+	auto username = QString();
+	stream >> peerIdSerialized >> msgIdBare >> type;
+	if (!stream.atEnd()) {
+		stream >> username;
+	}
+	if (stream.status() != QDataStream::Ok
+		|| type != qint32(AudioMsgId::Type::Song)
+		|| !peerIdSerialized
+		|| !msgIdBare) {
+		return std::nullopt;
+	}
+	return LastPlayedAudio{
+		FullMsgId{
+			DeserializePeerId(peerIdSerialized),
+			MsgId(msgIdBare),
+		},
+		std::move(username),
+	};
+}
+
+void SaveLastPlayedAudio(
+		not_null<Main::Session*> session,
+		FullMsgId itemId) {
+	if (LastPlayedAudioSaved == itemId) {
+		return;
+	}
+	LastPlayedAudioSaved = itemId;
+	LastPlayedAudioSession = session;
+	const auto peer = session->data().peer(itemId.peer);
+	auto result = QByteArray();
+	auto stream = QDataStream(&result, QIODevice::WriteOnly);
+	stream.setVersion(QDataStream::Qt_5_1);
+	stream
+		<< SerializePeerId(itemId.peer)
+		<< qint64(itemId.msg.bare)
+		<< qint32(AudioMsgId::Type::Song)
+		<< (peer ? peer->username() : QString());
+	session->local().writePref<QByteArray>(kLastPlayedAudioPref, result);
+}
+
+void ClearLastPlayedAudio() {
+	const auto session = LastPlayedAudioSession;
+	if (!LastPlayedAudioSaved || !session) {
+		return;
+	}
+	LastPlayedAudioSaved = std::nullopt;
+	LastPlayedAudioSession = nullptr;
+	session->local().writePref<QByteArray>(kLastPlayedAudioPref, QByteArray());
+}
+
+void UpdateLastPlayedAudio(const TrackState &state) {
+	const auto document = state.id.audio();
+	if (!document || state.id.type() != AudioMsgId::Type::Song) {
+		return;
+	}
+	const auto session = &document->session();
+	if (state.state == State::PausedAtEnd) {
+		ClearLastPlayedAudio();
+	} else {
+		SaveLastPlayedAudio(session, state.id.contextId());
+	}
 }
 
 } // namespace
@@ -939,9 +1030,29 @@ void Instance::playPause(
 	}
 }
 
+void Instance::restorePaused(const AudioMsgId &audioId) {
+	const auto data = getData(audioId.type());
+	const auto document = audioId.audio();
+	if (!data || data->streamed || !document || !document->isAudioFile()) {
+		return;
+	}
+	auto shared = document->owner().streaming().sharedDocument(
+		document,
+		audioId.contextId());
+	if (!shared) {
+		return;
+	}
+	const auto session = &document->session();
+	const auto position = session->local().mediaLastPlaybackPosition(
+		document->id);
+	playStreamed(audioId, std::move(shared), position, true);
+}
+
 void Instance::playStreamed(
 		const AudioMsgId &audioId,
-		std::shared_ptr<Streaming::Document> shared) {
+		std::shared_ptr<Streaming::Document> shared,
+		crl::time position,
+		bool paused) {
 	Expects(audioId.audio() != nullptr);
 
 	const auto data = getData(audioId.type());
@@ -960,7 +1071,15 @@ void Instance::playStreamed(
 		handleStreamingError(data, std::move(error));
 	}, data->streamed->lifetime);
 
-	data->streamed->instance.play(streamingOptions(audioId));
+	const auto streamed = data->streamed.get();
+	streamed->instance.play(streamingOptions(audioId, position));
+	if (paused
+		&& data->streamed.get() == streamed
+		&& streamed->instance.active()) {
+		// Start and immediately pause, so that the player shows the file
+		// without playing it.
+		streamed->instance.pause();
+	}
 
 	emitUpdate(audioId.type());
 }
@@ -1409,6 +1528,7 @@ void Instance::emitUpdate(AudioMsgId::Type type, CheckCallback check) {
 			return;
 		}
 		setCurrent(state.id);
+		UpdateLastPlayedAudio(state);
 		if (const auto streamed = data->streamed.get()) {
 			if (!streamed->instance.info().video.size.isEmpty()) {
 				streamed->progress.updateState(state);
@@ -1477,12 +1597,81 @@ void Instance::setupShortcuts() {
 	}, _lifetime);
 }
 
+void Instance::restoreLastPlayed(not_null<Main::Session*> session) {
+	if (_restoreLastPlayedStarted
+		|| !Core::App().settings().fork().restorePlayingAudio()
+		|| (&session->account() != &Core::App().activeAccount())) {
+		return;
+	}
+	const auto saved = ReadLastPlayedAudio(session);
+	if (!saved) {
+		return;
+	}
+	_restoreLastPlayedStarted = true;
+
+	const auto itemId = saved->itemId;
+	const auto username = saved->username;
+	const auto restore = [=] {
+		const auto item = session->data().message(itemId);
+		const auto document = (item && item->media())
+			? item->media()->document()
+			: nullptr;
+		if (document) {
+			restorePaused(AudioMsgId(document, itemId));
+		}
+	};
+	const auto request = [=](not_null<PeerData*> peer) {
+		session->api().requestMessageData(
+			peer,
+			itemId.msg,
+			crl::guard(session, restore));
+	};
+	const auto resolve = [=] {
+		if (const auto peer = session->data().peerByUsername(username)) {
+			request(peer);
+			return;
+		}
+		using Flag = MTPcontacts_ResolveUsername::Flag;
+		session->api().request(MTPcontacts_ResolveUsername(
+			MTP_flags(Flag()),
+			MTP_string(username),
+			MTP_string(QString())
+		)).done([=](const MTPcontacts_ResolvedPeer &result) {
+			result.match([&](const MTPDcontacts_resolvedPeer &data) {
+				session->data().processUsers(data.vusers());
+				session->data().processChats(data.vchats());
+				if (const auto peerId = peerFromMTP(data.vpeer())) {
+					if (const auto peer = session->data().peer(peerId)) {
+						request(peer);
+					}
+				}
+			});
+		}).send();
+	};
+	const auto attempt = [=] {
+		if (session->data().message(itemId)) {
+			restore();
+		} else if (const auto peer = session->data().peerLoaded(itemId.peer)) {
+			request(peer);
+		} else if (!username.isEmpty()) {
+			resolve();
+		}
+	};
+	if (session->data().chatsListLoaded()) {
+		attempt();
+	} else {
+		session->data().chatsListLoadedEvents()
+			| rpl::on_next([=](::Data::Folder*) { attempt(); }, _lifetime);
+	}
+}
+
 void Instance::stopAndClose() {
 	_listenTracker->finalize();
 	_closePlayerRequests.fire({});
 
 	stop(AudioMsgId::Type::Voice);
 	stop(AudioMsgId::Type::Song);
+	ClearLastPlayedAudio();
 
 	Shortcuts::ToggleMediaShortcuts(false);
 }
