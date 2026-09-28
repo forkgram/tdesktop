@@ -299,6 +299,8 @@ constexpr auto kPopularAppBotsLimit = 100;
 	if (strong && strong->windowId().hasChatsList()) {
 		strong->showThread(thread);
 		return strong;
+	} else if (!Window::CanShowSeparateWindow(thread)) {
+		return nullptr;
 	}
 	const auto window = Core::App().ensureSeparateWindowFor(thread);
 	return window ? window->sessionController() : nullptr;
@@ -3197,7 +3199,13 @@ std::unique_ptr<Ui::DropdownMenu> MakeAttachBotsMenu(
 	if (Data::CanSend(peer, ChatRestriction::SendMusic, false)) {
 		++minimal;
 		raw->addAction(tr::lng_all_music(tr::now), [=] {
-			controller->show(Box(MusicAttachBox, controller, peer, actionFactory));
+			const auto box = controller->show(
+				Box(MusicAttachBox, controller, peer, actionFactory));
+			if (const auto strong = box.get()) {
+				QObject::connect(parent, &QObject::destroyed, strong, [=] {
+					strong->closeBox();
+				});
+			}
 		}, &st::menuIconSoundOn);
 	}
 	const auto addBots = Data::CanSend(peer, ChatRestriction::SendInline, false)

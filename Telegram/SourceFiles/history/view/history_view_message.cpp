@@ -3317,9 +3317,7 @@ PointState Message::pointState(QPoint point) const {
 }
 
 bool Message::displayFromPhoto() const {
-	return hasFromPhoto()
-		&& !isAttachedToNext()
-		&& !data()->isSponsored();
+	return hasFromPhoto() && !isAttachedToNext();
 }
 
 void Message::clickHandlerPressedChanged(
@@ -3852,7 +3850,9 @@ bool Message::hasFromPhoto() const {
 	case Context::SavedSublist:
 	case Context::ScheduledTopic: {
 		const auto item = data();
-		if (item->isPostHidingAuthor()) {
+		if (item->isSponsored()) {
+			return false;
+		} else if (item->isPostHidingAuthor()) {
 			return false;
 		} else if (item->isPost()) {
 			return true;
@@ -4999,7 +4999,7 @@ TextForMimeData Message::selectedText(TextSelection selection) const {
 	auto textResult = hasVisibleText()
 		? text().toTextForMimeData(textSelection)
 		: TextForMimeData();
-	auto mediaResult = (mediaDisplayed || isHiddenByGroup())
+	auto mediaResult = (media && (mediaDisplayed || isHiddenByGroup()))
 		? media->selectedText(mediaSelection)
 		: TextForMimeData();
 	if (const auto check = factcheckBlock()) {

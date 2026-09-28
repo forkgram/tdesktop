@@ -1827,6 +1827,14 @@ bool HistoryItem::markEffectWatched() {
 	return true;
 }
 
+bool HistoryItem::markEmojiInteractionWatched() {
+	if (_flags & MessageFlag::EmojiInteractionWatched) {
+		return false;
+	}
+	_flags |= MessageFlag::EmojiInteractionWatched;
+	return true;
+}
+
 bool HistoryItem::mentionsMe() const {
 	if (Has<HistoryServicePinned>()
 		&& !Core::App().settings().notifyAboutPinned()) {
@@ -1965,37 +1973,33 @@ void HistoryItem::setIsPinned(bool pinned) {
 		}
 
 		auto &storage = _history->session().storage();
-		storage.add(Storage::SharedMediaAddExisting(
-			_history->peer->id,
-			MsgId(0), // topicRootId
-			PeerId(0), // monoforumPeerId
-			Storage::SharedMediaType::Pinned,
-			id,
-			{ id, id }));
-		_history->setHasPinnedMessages(true);
-		if (const auto topic = this->topic()) {
+		const auto add = [&](MsgId topicRootId, PeerId monoforumPeerId) {
 			storage.add(Storage::SharedMediaAddExisting(
 				_history->peer->id,
-				topic->rootId(),
-				PeerId(), // monoforumPeerId
+				topicRootId,
+				monoforumPeerId,
 				Storage::SharedMediaType::Pinned,
 				id,
-				{ id, id }));
+				{ id, id },
+				changed)); // incrementCount
+		};
+		add(MsgId(0), PeerId(0));
+		if (_history->asForum()) {
+			add(topicRootId(), PeerId(0));
+		}
+		if (const auto sublistPeer = sublistPeerId()) {
+			add(MsgId(0), sublistPeer);
+		}
+		_history->setHasPinnedMessages(true);
+		if (const auto topic = this->topic()) {
 			topic->setHasPinnedMessages(true);
 		}
 		if (const auto sublist = this->savedSublist()) {
-			storage.add(Storage::SharedMediaAddExisting(
-				_history->peer->id,
-				MsgId(0), // topicRootId
-				sublistPeerId(),
-				Storage::SharedMediaType::Pinned,
-				id,
-				{ id, id }));
 			sublist->setHasPinnedMessages(true);
 		}
 	} else {
 		_flags &= ~MessageFlag::Pinned;
-		if (_flags & MessageFlag::StoryItem) {
+		if (!changed || (_flags & MessageFlag::StoryItem)) {
 			return;
 		}
 
@@ -2449,9 +2453,9 @@ void HistoryItem::applyEdition(HistoryMessageEdition &&edition) {
 			}
 		}
 	}
-	const auto &checkedMedia = updatingSavedLocalEdit
-		? Get<HistoryMessageSavedMediaData>()->media
-		: _media;
+	const auto checkedMedia = updatingSavedLocalEdit
+		? Get<HistoryMessageSavedMediaData>()->media.get()
+		: _media.get();
 	clearFullRichPage();
 	if (edition.richPage) {
 		setRichPage(edition.richPage);
@@ -2625,6 +2629,7 @@ void HistoryItem::applyEdition(const MTPDmessageService &message) {
 
 		updateReactions(message.vreactions());
 	} else if (isService()) {
+		removeFromSharedMediaIndex();
 		if (const auto reply = Get<HistoryMessageReply>()) {
 			reply->clearData(this);
 		}
@@ -2632,6 +2637,7 @@ void HistoryItem::applyEdition(const MTPDmessageService &message) {
 		UpdateComponents(0);
 		createServiceFromMtp(message);
 		applyServiceDateEdition(message);
+		addToSharedMediaIndex();
 		finishEdition(-1);
 		_flags &= ~MessageFlag::DisplayFromChecked;
 
@@ -2685,6 +2691,9 @@ void HistoryItem::applySentMessage(const MTPDmessage &data) {
 		_flags &= ~MessageFlag::InvertMedia;
 	}
 
+	const auto wasTypes = sharedMediaTypes();
+	const auto wasTopicRootId = topicRootId();
+	const auto wasSublistPeerId = sublistPeerId();
 	updateSentContent(data);
 	updateReplyMarkup(HistoryMessageMarkupData(data.vreply_markup()));
 	updateForwardedInfo(data.vfwd_from());
@@ -2715,9 +2724,41 @@ void HistoryItem::applySentMessage(const MTPDmessage &data) {
 		});
 	}
 	setPostAuthor(data.vpost_author().value_or_empty());
-	setIsPinned(data.is_pinned());
 	contributeToSlowmode(data.vdate().v);
+	if (isRegular() && wasTypes) {
+		// addToSharedMediaIndex() below writes the message's current
+		// (key, mask); this is its inverse. A type the message keeps at
+		// an unchanged key must not be removed and re-added: onlyMatched
+		// makes the removal skip an id no fetched slice holds while the
+		// re-add still raises the count, and SharedMedia::remove fires a
+		// removal event that every open shared-media viewer of that type
+		// applies, so such a pair is at best count-neutral, never free.
+		// A key move is different: SharedMedia keys the peer-wide list
+		// by peerId alone, so the old and the new key meet there and the
+		// removal must keep lowering its count to offset that re-add.
+		const auto keyMoved = (topicRootId() != wasTopicRootId)
+			|| (sublistPeerId() != wasSublistPeerId);
+		const auto nowTypes = sharedMediaTypes();
+		auto goneTypes = Storage::SharedMediaTypesMask();
+		for (auto index = 0; index != Storage::kSharedMediaTypeCount; ++index) {
+			const auto type = static_cast<Storage::SharedMediaType>(index);
+			if (wasTypes.test(type) && (keyMoved || !nowTypes.test(type))) {
+				goneTypes.set(type);
+			}
+		}
+		if (goneTypes) {
+			const auto onlyMatched = !keyMoved;
+			_history->session().storage().remove(Storage::SharedMediaRemoveOne(
+				_history->peer->id,
+				wasTopicRootId,
+				wasSublistPeerId,
+				goneTypes,
+				id,
+				onlyMatched));
+		}
+	}
 	addToSharedMediaIndex();
+	setIsPinned(data.is_pinned());
 	addToMessagesIndex();
 	invalidateChatListEntry();
 	if (const auto period = data.vttl_period(); period && period->v > 0) {
@@ -5143,6 +5184,9 @@ void HistoryItem::setupForwardedComponent(const CreateConfig &config) {
 }
 
 void HistoryItem::applyInitialEffectWatched() {
+	if (out() || (_history->inboxReadTillId() && !unread(_history))) {
+		_flags |= MessageFlag::EmojiInteractionWatched;
+	}
 	if (!effectId()) {
 		return;
 	} else if (out()) {
@@ -5154,8 +5198,11 @@ void HistoryItem::applyInitialEffectWatched() {
 }
 
 void HistoryItem::applyEffectWatchedOnUnreadKnown() {
-	if (effectId() && !out() && !unread(_history)) {
-		_flags |= MessageFlag::EffectWatched;
+	if (!out() && !unread(_history)) {
+		_flags |= MessageFlag::EmojiInteractionWatched;
+		if (effectId()) {
+			_flags |= MessageFlag::EffectWatched;
+		}
 	}
 }
 

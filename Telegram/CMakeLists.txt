@@ -57,7 +57,7 @@ endif()
 include(cmake/generate_update_keys.cmake)
 generate_update_keys(Telegram ${res_loc}/update)
 
-if (DESKTOP_APP_TEST_APPS OR DESKTOP_APP_SPECIAL_TARGET)
+if (DESKTOP_APP_TEST_APPS OR TDESKTOP_BUILD_UPDATE_TESTS)
     include(cmake/test_update_verify.cmake)
 endif()
 
@@ -2010,6 +2010,8 @@ PRIVATE
     test/test_hover.h
     test/test_ink.cpp
     test/test_ink.h
+    test/test_lang_pack.cpp
+    test/test_lang_pack.h
     test/test_launch_fuse.cpp
     test/test_launch_fuse.h
     test/test_layer_root.cpp
@@ -2018,6 +2020,10 @@ PRIVATE
     test/test_log.h
     test/test_log_lines.cpp
     test/test_log_lines.h
+    test/test_mapped_target.cpp
+    test/test_mapped_target.h
+    test/test_marking_read.cpp
+    test/test_marking_read.h
     test/test_menu.cpp
     test/test_menu.h
     test/test_messages.cpp
@@ -2028,6 +2034,8 @@ PRIVATE
     test/test_panel.h
     test/test_probe.cpp
     test/test_probe.h
+    test/test_rpc_fixture.cpp
+    test/test_rpc_fixture.h
     test/test_rpc_retry.cpp
     test/test_rpc_retry.h
     test/test_runner.cpp
@@ -2037,10 +2045,14 @@ PRIVATE
     test/test_style.h
     test/test_text_reads.cpp
     test/test_text_reads.h
+    test/test_toast_capture.cpp
+    test/test_toast_capture.h
     test/test_transfer.cpp
     test/test_transfer.h
     test/test_via_window.cpp
     test/test_via_window.h
+    test/test_wheel.cpp
+    test/test_wheel.h
     test/test_widgets.cpp
     test/test_widgets.h
     ui/boxes/edit_invite_link_session.cpp

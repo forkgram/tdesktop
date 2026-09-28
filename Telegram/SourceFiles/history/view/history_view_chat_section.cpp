@@ -582,7 +582,6 @@ ChatWidget::ChatWidget(
 			.repliesRootId = _repliesRootId,
 			.topic = _topic,
 			.sublist = _sublist,
-			.monoforumPeerId = _monoforumPeerId,
 			.scroll = _scroll.get(),
 			.list = _inner.data(),
 			.keyboardReservedHeight = [=] {
@@ -1319,7 +1318,7 @@ void ChatWidget::subscribeToTopic() {
 void ChatWidget::closeCurrent() {
 	const auto thread = controller()->windowId().chat();
 	if ((_sublist && thread == _sublist) || (_topic && thread == _topic)) {
-		controller()->window().close();
+		Core::App().closeWindow(&controller()->window());
 	} else {
 		controller()->showBackFromStack(Window::SectionShow(
 			anim::type::normal,
@@ -5814,7 +5813,7 @@ void ChatWidget::listOpenPhoto(
 		photo,
 		{
 			context,
-			(item && !_monoforumPeerId)
+			(item && _peer->isForum())
 				? item->topicRootId()
 				: _repliesRootId,
 			_monoforumPeerId,
@@ -5836,7 +5835,7 @@ void ChatWidget::listOpenDocument(
 		showInMediaView,
 		{
 			context,
-			(item && !_monoforumPeerId)
+			(item && _peer->isForum())
 				? item->topicRootId()
 				: _repliesRootId,
 			_monoforumPeerId,

@@ -3580,7 +3580,9 @@ base::weak_qptr<Ui::BoxContent> ShowForwardMessagesBox(
 				return true;
 			}
 			const auto id = SeparateId(
-				((peer->isForum() && !peer->useSubsectionTabs())
+				((!thread->asTopic()
+					&& peer->isForum()
+					&& !peer->useSubsectionTabs())
 					? SeparateType::Forum
 					: SeparateType::Chat),
 				thread);

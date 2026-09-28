@@ -3722,6 +3722,45 @@ void ApiWrap::requestSharedMedia(
 	_sharedMediaRequests.emplace(key);
 }
 
+void ApiWrap::requestPinnedMessagesIfNeeded(
+		not_null<PeerData*> peer,
+		MsgId messageId,
+		MsgId topicRootId,
+		PeerId monoforumPeerId) {
+	if (!IsServerMsgId(messageId)) {
+		return;
+	}
+	const auto requestOne = [&](MsgId topic, PeerId mono) {
+		const auto snapshot = _session->storage().snapshot(
+			Storage::SharedMediaQuery(
+				Storage::SharedMediaKey(
+					peer->id,
+					topic,
+					mono,
+					SharedMediaType::Pinned,
+					messageId),
+				0,
+				0));
+		if (!snapshot.count || snapshot.messageIds.contains(messageId)) {
+			return;
+		}
+		requestSharedMedia(
+			peer,
+			topic,
+			mono,
+			SharedMediaType::Pinned,
+			messageId,
+			SliceType::Around);
+	};
+	requestOne(MsgId(0), PeerId(0));
+	if (topicRootId && peer->forumTopicFor(topicRootId)) {
+		requestOne(topicRootId, PeerId(0));
+	}
+	if (monoforumPeerId && peer->monoforumSublistFor(monoforumPeerId)) {
+		requestOne(MsgId(0), monoforumPeerId);
+	}
+}
+
 void ApiWrap::sharedMediaDone(
 		not_null<PeerData*> peer,
 		MsgId topicRootId,
@@ -3794,7 +3833,7 @@ void ApiWrap::sendAction(const SendAction &action) {
 			: nullptr;
 		if (topic) {
 			topic->readTillEnd();
-		} else if (sublist) {
+		} else if (sublist && sublist->parentChat()) {
 			sublist->readTillEnd();
 		} else {
 			_session->data().histories().readInbox(action.history);

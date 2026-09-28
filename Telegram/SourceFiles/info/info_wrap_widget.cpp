@@ -47,6 +47,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_changes.h"
 #include "data/data_user.h"
 #include "data/data_forum_topic.h"
+#include "data/data_saved_sublist.h"
 #include "mainwidget.h"
 #include "lang/lang_keys.h"
 #include "lang/lang_numbers_animation.h"
@@ -145,7 +146,11 @@ WrapWidget::WrapWidget(
 		});
 	}, lifetime());
 	restoreHistoryStack(memento->takeStack());
+	subscribeToThreadDestroyed();
+}
 
+void WrapWidget::subscribeToThreadDestroyed() {
+	_threadDestroyedLifetime.destroy();
 	if (const auto topic = _controller->topic()) {
 		topic->destroyed(
 		) | rpl::on_next([=] {
@@ -159,7 +164,23 @@ WrapWidget::WrapWidget(
 			} else {
 				_removeRequests.fire({});
 			}
-		}, lifetime());
+		}, _threadDestroyedLifetime);
+	} else if (const auto sublist = _controller->sublist()) {
+		sublist->destroyed(
+		) | rpl::on_next([=] {
+			auto keep = base::take(_threadDestroyedLifetime);
+			auto removeRequests = base::take(_removeRequests);
+			const auto parent = _controller->parentController();
+			parent->hideSpecialLayer();
+			parent->showBackFromStack(
+				Window::SectionShow(
+					anim::type::instant,
+					anim::activation::background));
+			parent->clearSectionStack(Window::SectionShow(
+				Window::SectionShow::Way::ClearStack,
+				anim::type::instant));
+			removeRequests.fire({});
+		}, _threadDestroyedLifetime);
 	}
 }
 
@@ -947,6 +968,8 @@ bool WrapWidget::returnToFirstStackFrame(
 	const auto first = _historyStack.front().section.get();
 	if (first->peer() == memento->peer()
 		&& first->savedMessages() == memento->savedMessages()
+		&& first->topic() == memento->topic()
+		&& first->sublist() == memento->sublist()
 		&& first->section().type() == memento->section().type()
 		&& first->section().type() == Section::Type::Profile) {
 		_historyStack.resize(1);
@@ -1022,6 +1045,7 @@ void WrapWidget::showNewContent(
 			showNewContent(memento);
 		}
 	}
+	subscribeToThreadDestroyed();
 
 	if (animationParams) {
 		if (Ui::InFocusChain(this)) {
