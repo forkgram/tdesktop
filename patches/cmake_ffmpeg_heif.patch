@@ -1,0 +1,25 @@
+diff --git a/external/ffmpeg/CMakeLists.txt b/external/ffmpeg/CMakeLists.txt
+index 7854c9f..b39a70e 100644
+--- a/external/ffmpeg/CMakeLists.txt
++++ b/external/ffmpeg/CMakeLists.txt
+@@ -9,7 +9,7 @@ add_library(desktop-app::external_ffmpeg ALIAS external_ffmpeg)
+ 
+ if (DESKTOP_APP_USE_PACKAGED OR LINUX)
+     find_package(PkgConfig REQUIRED)
+-    pkg_check_modules(DESKTOP_APP_FFMPEG REQUIRED IMPORTED_TARGET
++    pkg_check_modules(DESKTOP_APP_FFMPEG REQUIRED IMPORTED_TARGET STATIC
+         libavcodec
+         libavfilter
+         libavformat
+diff --git a/external/qt/qt_static_plugins/kimageformats/CMakeLists.txt b/external/qt/qt_static_plugins/kimageformats/CMakeLists.txt
+index 81d58bd..add7909 100644
+--- a/external/qt/qt_static_plugins/kimageformats/CMakeLists.txt
++++ b/external/qt/qt_static_plugins/kimageformats/CMakeLists.txt
+@@ -60,6 +60,7 @@ if (DESKTOP_APP_USE_PACKAGED OR LINUX)
+         $<TARGET_NAME_IF_EXISTS:avif>
+         $<TARGET_NAME_IF_EXISTS:PkgConfig::DESKTOP_APP_AVIF>
+         $<TARGET_NAME_IF_EXISTS:heif>
++        desktop-app::external_ffmpeg
+         $<TARGET_NAME_IF_EXISTS:PkgConfig::DESKTOP_APP_JXL>
+     )
+ elseif (WIN32)
