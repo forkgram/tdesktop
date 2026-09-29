@@ -459,7 +459,7 @@ if customRunCommand:
 stage('patches', """
     git clone https://github.com/desktop-app/patches.git
     cd patches
-    git checkout 893deca53ff5b8c6ad44ce687b3285d652830236
+    git checkout c97ff78de632c72e35f9e3205e2447efeb58b986
 mac:
     git clone https://github.com/desktop-app/qt6_highsierra_patches.git qt6_highsierra
     cd qt6_highsierra
@@ -1364,6 +1364,7 @@ mac:
         -D WITH_FFMPEG_DECODER=ON \\
         -D FFMPEG_ROOT=$USED_PREFIX \\
         -D WITH_LIBSHARPYUV=OFF \\
+        -D WITH_GDK_PIXBUF=OFF \\
         -D CMAKE_DISABLE_FIND_PACKAGE_TIFF=TRUE \\
         -D CMAKE_DISABLE_FIND_PACKAGE_JPEG=TRUE \\
         -D CMAKE_DISABLE_FIND_PACKAGE_PNG=TRUE \\
