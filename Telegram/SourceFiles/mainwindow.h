@@ -147,6 +147,7 @@ private:
 	void updateFpsCounterGeometry();
 	void ensureLayerCreated();
 	void destroyLayer();
+	void raiseMediaPreview();
 
 	void themeUpdated(const Window::Theme::BackgroundUpdate &data);
 

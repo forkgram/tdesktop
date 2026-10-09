@@ -516,7 +516,6 @@ ChatWidget::ChatWidget(
 	}, lifetime());
 
 	setupRoot();
-	setupShortcuts();
 
 	_peer->updateFull();
 	if (const auto channel = _peer->asMegagroup()) {
@@ -857,6 +856,7 @@ ChatWidget::ChatWidget(
 	setupTopicViewer();
 	setupComposeControls();
 	setupComposeStash();
+	setupShortcuts();
 	setupSwipeReplyAndBack();
 
 	if (mode() != Mode::Sublist) {
@@ -1907,7 +1907,8 @@ void ChatWidget::setupSwipeReplyAndBack() {
 				&& (!view->data()->isEphemeral()
 					|| view->data()->out()))
 			|| view->data()->showSimilarChannels()
-			|| view->data()->isService()) {
+			|| (view->data()->isService()
+				&& !ServiceAllowsSwipeReply(view->data()))) {
 			return result;
 		}
 		const auto item = _inner->lookupItemByPoint(
@@ -6125,6 +6126,13 @@ void ChatWidget::setupShortcuts() {
 				return true;
 			});
 		}
+		_stash
+			&& _stash->canExchange()
+			&& request->check(Command::StashMessage, 1)
+			&& request->handle([=] {
+				_stash->exchange();
+				return true;
+			});
 		if ((mode() == Mode::History) && session().supportMode()) {
 			request->check(Command::SupportToggleMuted)
 				&& request->handle([=] {
@@ -6165,7 +6173,10 @@ void ChatWidget::setupComposeStash() {
 			cancelSuggestPost();
 			_composeControls->updateForwarding();
 		},
-		.openFiles = [=](Ui::PreparedList &list) {
+		.openFiles = [=](Ui::PreparedList &list) -> SendFilesBox* {
+			if (showSendingFilesError(list)) {
+				return nullptr;
+			}
 			return confirmSendingFiles(std::move(list), QString())
 				? _sendFilesBox.data()
 				: nullptr;

@@ -73,17 +73,20 @@ StashManager::StashManager(StashManagerDescriptor &&descriptor)
 		exchange();
 	}, _lifetime);
 
-	_data.buttons->setStashMenuFiller([=](not_null<Ui::PopupMenu*> menu) {
-		if (!current()) {
-			return;
-		}
-		FillStashMenu(
-			menu,
-			_data.show,
-			_data.menuDetails(),
-			[=] { remove(); },
-			[=](Api::SendOptions options) { sendStashed(options); });
-	});
+	_data.buttons->setStashMenuFiller(
+		crl::guard(this, [=](not_null<Ui::PopupMenu*> menu) {
+			if (!current()) {
+				return;
+			}
+			FillStashMenu(
+				menu,
+				_data.show,
+				_data.menuDetails(),
+				crl::guard(this, [=] { remove(); }),
+				crl::guard(this, [=](Api::SendOptions options) {
+					sendStashed(options);
+				}));
+		}));
 
 	_data.session->changes().historyUpdates(
 		Data::HistoryUpdate::Flag::ComposeStash

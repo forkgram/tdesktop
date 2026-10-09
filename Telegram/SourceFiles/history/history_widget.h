@@ -15,6 +15,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history_view_top_toast.h"
 #include "history/history.h"
 #include "chat_helpers/field_characters_count_manager.h"
+#include "chat_helpers/rich_paste_toast.h"
 #include "data/data_report.h"
 #include "window/section_widget.h"
 #include "window/window_session_controller.h"
@@ -142,6 +143,7 @@ class ComposeAiButton;
 class ComposeTooltipManager;
 class RichDraftPreview;
 class StashManager;
+class StashHintManager;
 using AiTooltipManager = ComposeTooltipManager;
 struct VoiceToSend;
 } // namespace HistoryView::Controls
@@ -645,6 +647,7 @@ private:
 	void setupPinnedTracker();
 	void checkPinnedBarState();
 	void clearHidingPinnedBar();
+	[[nodiscard]] Ui::PinnedBar *visiblePinnedBar() const;
 	void refreshPinnedBarButton(bool many, HistoryItem *item);
 	void checkLastPinnedClickedIdReset(
 		int wasScrollTop,
@@ -963,6 +966,7 @@ private:
 	rpl::lifetime _subsectionTopicsLifetime;
 	std::unique_ptr<HistoryView::Controls::AiTooltipManager> _aiTooltipManager;
 	std::unique_ptr<HistoryView::Controls::AiTooltipManager> _sendAsFileTooltipManager;
+	std::unique_ptr<HistoryView::Controls::StashHintManager> _stashHintManager;
 	std::shared_ptr<Ui::ChatStyle> _fieldChatStyle;
 	bool _cmdStartShown = false;
 	object_ptr<Ui::InputField> _field;
@@ -1031,6 +1035,7 @@ private:
 
 	bool _sponsoredMessagesStateKnown = false;
 	bool _justMarkingAsRead = false;
+	ChatHelpers::RichPasteOfferThrottle _richPasteOfferThrottle;
 
 	object_ptr<Ui::PlainShadow> _topShadow;
 	bool _inGrab = false;

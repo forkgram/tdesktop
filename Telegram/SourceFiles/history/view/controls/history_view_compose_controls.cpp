@@ -85,6 +85,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/controls/history_view_compose_ai_button.h"
 #include "history/view/controls/history_view_compose_ai_tooltip.h"
 #include "history/view/controls/history_view_compose_media_edit_manager.h"
+#include "history/view/controls/history_view_compose_stash_hint.h"
 #include "history/view/controls/history_view_forward_panel.h"
 #include "history/view/controls/history_view_rich_draft_preview.h"
 #include "history/view/controls/history_view_draft_options.h"
@@ -1836,12 +1837,9 @@ void ComposeControls::setToggleCommentsButton(
 		_commentsShownHidden.value(
 		) | rpl::on_next([=](bool hidden) {
 			if (_commentsShown->isHidden() != hidden) {
-				if (hidden) {
-					_commentsShown->hide();
-				} else {
-					_commentsShown->show();
-					updateControlsGeometry(_wrap->size());
-				}
+				_commentsShown->setVisible(!hidden);
+				updateControlsGeometry(_wrap->size());
+				_commentsShown->parentWidget()->update();
 			}
 		}, _commentsShown->lifetime());
 		std::move(
@@ -2324,10 +2322,17 @@ void ComposeControls::offerRichPaste(not_null<const QMimeData*> data) {
 	const auto cursor = _field->textCursor();
 	const auto position = cursor.position();
 	const auto anchor = cursor.anchor();
+	const auto from = std::min(position, anchor);
+	const auto till = std::max(position, anchor);
+	const auto textFrom = int(_field->getTextWithTagsPart(0, from).text.size());
+	const auto textTill = int(_field->getTextWithTagsPart(0, till).text.size());
+	const auto tail = cursor.document()->characterCount() - till;
 	crl::on_main(_wrap.get(), [=] {
 		const auto now = _field->getTextWithTags();
 		const auto parent = _pasteToastParent.data();
-		if ((now == was) || !parent) {
+		if ((now == was)
+			|| !parent
+			|| !_richPasteOfferThrottle.take()) {
 			return;
 		}
 		ChatHelpers::ShowRichPasteToast({
@@ -2341,15 +2346,14 @@ void ComposeControls::offerRichPaste(not_null<const QMimeData*> data) {
 					if (!unchanged) {
 						return;
 					}
-					const auto &markdown = decision->markdown;
-					const auto from = std::min(position, anchor);
 					_field->setTextWithTags(ChatHelpers::TextWithTagsReplaced(
 						was,
-						from,
-						std::max(position, anchor),
-						markdown));
+						textFrom,
+						textTill,
+						decision->markdown));
 					_field->setCursorPosition(
-						from + int(markdown.text.size()));
+						_field->textCursor().document()->characterCount()
+							- tail);
 					return;
 				}
 				if (unchanged) {
@@ -2737,6 +2741,9 @@ std::unique_ptr<Data::ComposeStash> ComposeControls::takeComposeStash() {
 	if (!result->forward.ids.empty()) {
 		cancelForward();
 	}
+	if (_stashHintManager) {
+		_stashHintManager->markUsed();
+	}
 	return result;
 }
 
@@ -2775,6 +2782,9 @@ void ComposeControls::applyComposeStash(Data::ComposeStash &&stash) {
 			_monoforumPeerId,
 			std::move(stash.forward));
 		updateForwarding();
+	}
+	if (_stashHintManager) {
+		_stashHintManager->markUsed();
 	}
 	focus();
 }
@@ -2835,6 +2845,9 @@ void ComposeControls::hidePanelsAnimated() {
 void ComposeControls::hide() {
 	showStarted();
 	_hidden = true;
+	if (_stashHintManager) {
+		_stashHintManager->hide();
+	}
 }
 
 void ComposeControls::show() {
@@ -2890,6 +2903,17 @@ void ComposeControls::init() {
 		});
 	_header->setExtractMediaButton(_forkExtractMedia->button());
 
+	if (session().settings().shouldShowStashHint()) {
+		_stashHintManager = std::make_unique<Controls::StashHintManager>(
+			Controls::StashHintDescriptor{
+				.session = _session,
+				.toastParent = [=]() -> QWidget* {
+					return _pasteToastParent.data();
+				},
+				.fieldText = [=] { return _field->getTextWithTags().text; },
+				.canUse = [=] { return canUseComposeStash(); },
+			});
+	}
 	if (_attachToggle) {
 		_attachToggle->setAccessibleName(tr::lng_attach(tr::now));
 	}
@@ -3519,6 +3543,12 @@ bool ComposeControls::suppressSendAction() const {
 }
 
 void ComposeControls::fieldChanged() {
+	if (_stashHintManager) {
+		const auto save = bool(_textUpdateEvents & TextUpdateEvent::SaveDraft);
+		const auto sendTyping = bool(
+			_textUpdateEvents & TextUpdateEvent::SendTyping);
+		_stashHintManager->trackChange(save && sendTyping);
+	}
 	const auto typing = (!_inlineBot
 		&& !_header->isEditingMessage()
 		&& (_textUpdateEvents & TextUpdateEvent::SendTyping)
@@ -4607,7 +4637,8 @@ void ComposeControls::initVoiceRecordBar() {
 		return Ui::AppInFocus();
 	}) | rpl::on_next([=](not_null<Shortcuts::Request*> request) {
 		using Command = Shortcuts::Command;
-		if (Data::CanSendAnything(_history->peer, !_topicRootId)) {
+		if (showRecordButton()
+			&& Data::CanSendAnything(_history->peer, !_topicRootId)) {
 			const auto isVoice = request->check(Command::RecordVoice, 1);
 			const auto isRound = !isVoice
 				&& request->check(Command::RecordRound, 1);

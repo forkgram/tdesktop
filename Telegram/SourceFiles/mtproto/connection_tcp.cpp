@@ -510,6 +510,10 @@ void TcpConnection::connectToServer(
 		int16 protocolDcId,
 		bool protocolForFiles,
 		const QString &webSocketPath) {
+	if (_status == Status::Finished) {
+		// Queued connectToServer() may arrive after disconnectFromServer().
+		return;
+	}
 	Expects(_address.isEmpty());
 	Expects(_port == 0);
 	Expects(_protocol == nullptr);
