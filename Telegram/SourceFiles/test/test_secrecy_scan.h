@@ -286,7 +286,7 @@ struct SecrecyScanArgs {
 // reported and do not decide.
 bool CheckSecrecy(const SecrecyScanArgs &args, const QString &what);
 
-// Eight session-free stages over synthetic log trees in a QTemporaryDir,
+// Ten session-free stages over synthetic log trees in a QTemporaryDir,
 // with synthetic secrets only: canaries, embedded vs bounded, a Recv hit
 // that is reported but does not decide, ten client-written leaks (among
 // them words joined by line breaks, escapes and commas, and a vector
@@ -297,7 +297,22 @@ bool CheckSecrecy(const SecrecyScanArgs &args, const QString &what);
 // and a Send entry still decide; a site that would print a secret is
 // withheld), the undecided refusals, identity selection (a same-name part
 // of another day and an earlier launch's lines before the banner are not
-// counted), and the rows printing no secret. Emits no deliberate FAIL.
+// counted), the rows printing no secret, overlay telemetry (the digit
+// runs of an ordinary decimal value, as synthetic short secrets, fail at
+// the row's "<file>|<head>|-" site; the same value as a TelemetryNumber
+// holds them only embedded and that scan is clean; every TelemetryNumber
+// of the stage's values prints as documented and holds no bounded digit
+// run, while the ordinary decimal of every finite value holds one), and
+// the shared helpers' numbers. That last stage reads each converted
+// shared-helper row through its own formatter for fixed synthetic values:
+// without the request it prints today's text, and under it the same text
+// with only a "p" after each number; the ordinary text's digit runs, as
+// synthetic short secrets, fail the scan at that row, while the requested
+// row holds none bounded and scans clean; and a synthetic phrase in its
+// caller text gives the same word runs in both formats, beside a premise
+// that a TelemetryNumber between phrase words ends a run. It never asks
+// the process-wide request (RequestTelemetryNumbers). Emits no deliberate
+// FAIL.
 void AppendSecrecyScanSelfTest(not_null<Runner*> runner);
 
 } // namespace Test

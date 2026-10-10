@@ -15,8 +15,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session.h"
 #include "mainwidget.h"
 #include "test/test_capture.h"
+#include "test/test_console_lock.h"
 #include "test/test_log.h"
 #include "test/test_runner.h"
+#include "test/test_window_exposure.h"
 #include "ui/effects/animation_value.h"
 #include "window/window_controller.h"
 
@@ -104,6 +106,7 @@ struct State {
 	MarkingReadReading refused;
 	MarkingReadReading restored;
 	PreparedWidgetCapture capture;
+	WindowExposure exposure;
 };
 
 [[nodiscard]] QString FixtureSkip(const std::shared_ptr<State> &state) {
@@ -159,7 +162,7 @@ struct State {
 
 MarkingReadReading ReadMainWindowMarking(Window::Controller *controller) {
 	auto result = MarkingReadReading();
-	result.screenLocked = Core::App().screenIsLocked();
+	result.screenLocked = ReadConsoleLock().locked();
 	if (!controller) {
 		result.refusal = u"no main window to keep from marking "
 			u"messages read"_q;
@@ -221,6 +224,7 @@ QString MarkingReadDetails(const MarkingReadReading &reading) {
 void AppendMainWindowNotMarkingReadSelfTest(not_null<Runner*> runner) {
 	const auto state = std::make_shared<State>();
 	runner->onFinish([=] {
+		RestoreWindowExposure(state->exposure);
 		if (state->leverApplied && state->controller) {
 			state->controller->activate();
 		}
@@ -273,6 +277,8 @@ void AppendMainWindowNotMarkingReadSelfTest(not_null<Runner*> runner) {
 		.run = [=] {
 			state->controlStarted = crl::now();
 			Arrange(state->controller, state->idleRefreshed);
+			state->exposure = KeepWindowExposed(
+				state->controller->widget().get());
 		},
 		.until = [=] {
 			// _isActive stays stale until updateIsActive(). This is the
@@ -280,18 +286,22 @@ void AppendMainWindowNotMarkingReadSelfTest(not_null<Runner*> runner) {
 			// minimize lever.
 			RefreshActive(state->controller);
 			state->control = ReadMainWindowMarking(state->controller);
-			if (state->control.markingAsRead
-				|| state->control.screenLocked) {
+			if (state->control.markingAsRead) {
 				return true;
 			}
-			return !state->control.exposed
+			// The lock only bounds the wait, as an unexposed window does: a
+			// locked console whose window still marks read runs the deciding
+			// half.
+			return (state->control.screenLocked || !state->control.exposed)
 				&& (crl::now() - state->controlStarted
 					>= kNotMarkingReadBound);
 		},
 		.then = [=] {
-			Note(u"not-marking-read self-test: control %1%2"_q.arg(
-				MarkingReadDetails(state->control),
-				IdleSuffix(state->controller)));
+			Note(u"not-marking-read self-test: control %1%2 - exposure "
+				u"before the lever: %3"_q.arg(
+					MarkingReadDetails(state->control),
+					IdleSuffix(state->controller),
+					WindowExposureText(state->exposure)));
 			if (!state->control.markingAsRead) {
 				return;
 			}
@@ -469,6 +479,11 @@ void AppendMainWindowNotMarkingReadSelfTest(not_null<Runner*> runner) {
 				!state->restored.isMinimized && !state->restored.isHidden,
 				u"the main window is shown again"_q,
 				MarkingReadDetails(state->restored));
+			RestoreWindowExposure(state->exposure);
+			const auto after = ReadWindowExposure(
+				state->controller->widget().get());
+			Note(u"not-marking-read self-test: restore: exposure after the "
+				u"undo: %1"_q.arg(WindowExposureText(after)));
 		},
 		.timeout = kDefaultStageTimeout,
 		.timeoutDetails = [=] {

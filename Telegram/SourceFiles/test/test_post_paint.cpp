@@ -17,6 +17,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "test/test_capture.h"
 #include "test/test_log.h"
 #include "test/test_runner.h"
+#include "test/test_window_exposure.h"
 #include "ui/rp_widget.h"
 #include "ui/ui_utility.h"
 #include "window/window_controller.h"
@@ -52,13 +53,42 @@ constexpr auto kGrabFreeLead = crl::time(40);
 } // namespace
 
 QString PostPaintSampleText(const PostPaintSample &sample) {
+	return PostPaintSampleText(sample, HelperNumberFormat());
+}
+
+QString PostPaintSampleText(
+		const PostPaintSample &sample,
+		NumberFormat format) {
 	return u"kind=post seq=%1 paint=%2 last=%3 covered=%4 lo=%5 hi=%6"_q
-		.arg(sample.seq)
-		.arg(sample.paintAt)
-		.arg(sample.lastPaintAt)
-		.arg(sample.covered)
-		.arg(sample.lo)
-		.arg(sample.hi);
+		.arg(HelperNumber(sample.seq, format))
+		.arg(HelperNumber(sample.paintAt, format))
+		.arg(HelperNumber(sample.lastPaintAt, format))
+		.arg(HelperNumber(sample.covered, format))
+		.arg(HelperNumber(sample.lo, format))
+		.arg(HelperNumber(sample.hi, format));
+}
+
+QString PostPaintStopText(
+		const QString &name,
+		const PostPaintStop &stop,
+		NumberFormat format) {
+	auto text
+		= u"%1: kind=stop reason=%2 seq=%3 pending=%4 samples=%5 paints=%6 "
+		"ignored=%7 dropped=%8"_q
+			.arg(name)
+			.arg(stop.reason);
+	const auto values = {
+		stop.seq,
+		stop.pending ? 1 : 0,
+		stop.samples,
+		stop.paints,
+		stop.ignored,
+		stop.dropped,
+	};
+	for (const auto value : values) {
+		text = ArgNumber(text, value, format);
+	}
+	return text;
 }
 
 PostPaintSampler::PostPaintSampler(
@@ -168,16 +198,18 @@ void PostPaintSampler::finish(const QString &reason) {
 	}
 	_stopReason = reason;
 	const auto pending = base::take(_pending);
-	Note(u"%1: kind=stop reason=%2 seq=%3 pending=%4 samples=%5 paints=%6 "
-		"ignored=%7 dropped=%8"_q
-			.arg(_name)
-			.arg(_stopReason)
-			.arg(_samples.empty() ? 0 : _samples.back().seq)
-			.arg(pending ? 1 : 0)
-			.arg(int(_samples.size()))
-			.arg(_paints)
-			.arg(_ignored)
-			.arg(_dropped));
+	Note(PostPaintStopText(
+		_name,
+		{
+			.reason = _stopReason,
+			.seq = _samples.empty() ? 0 : _samples.back().seq,
+			.pending = pending,
+			.samples = int(_samples.size()),
+			.paints = _paints,
+			.ignored = _ignored,
+			.dropped = _dropped,
+		},
+		HelperNumberFormat()));
 }
 
 bool PostPaintSampler::sampling(crl::time now) const {
@@ -1088,6 +1120,7 @@ void AppendPostPaintSamplerSelfTest(not_null<Runner*> runner) {
 		int paintMark = 0;
 		int sampleMark = 0;
 		DestroyReading atDestroy;
+		WindowExposure exposure;
 		bool destroyPosted = false;
 	};
 	const auto state = std::make_shared<State>();
@@ -1098,6 +1131,7 @@ void AppendPostPaintSamplerSelfTest(not_null<Runner*> runner) {
 	// The sampler goes before the widget: its destructor removes its filter
 	// from the owner while the owner still lives.
 	runner->onFinish([=] {
+		RestoreWindowExposure(state->exposure);
 		state->control.cancel();
 		state->sampler = nullptr;
 		state->fixture.widget = nullptr;
@@ -1140,6 +1174,7 @@ void AppendPostPaintSamplerSelfTest(not_null<Runner*> runner) {
 			}
 			const auto fixture = &state->fixture;
 			const auto widget = fixture->widget.get();
+			state->exposure = KeepWindowExposed(widget);
 			state->sampler = std::make_unique<PostPaintSampler>(
 				u"post-paint self-test"_q,
 				widget,
@@ -1157,7 +1192,12 @@ void AppendPostPaintSamplerSelfTest(not_null<Runner*> runner) {
 		},
 		.then = [=] {
 			const auto reading = ReadFixtureGate(state->fixture, state->from);
-			Check(reading.ok, gate, reading.details);
+			Check(
+				reading.ok,
+				gate,
+				reading.details
+					+ u" | "_q
+					+ WindowExposureText(state->exposure));
 			if (reading.ok) {
 				return;
 			}
@@ -1165,6 +1205,7 @@ void AppendPostPaintSamplerSelfTest(not_null<Runner*> runner) {
 				state->fixtureGate = gate;
 			}
 			state->fixture.continuous = false;
+			RestoreWindowExposure(state->exposure);
 			state->sampler = nullptr;
 			state->fixture.widget = nullptr;
 		},
@@ -1410,6 +1451,7 @@ void AppendPostPaintSamplerSelfTest(not_null<Runner*> runner) {
 					.arg(reason)
 					.arg(state->fixture.widget ? u"alive"_q : u"released"_q)
 					.arg(state->fixture.nullImages));
+			RestoreWindowExposure(state->exposure);
 		},
 	});
 }

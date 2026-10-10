@@ -3925,7 +3925,7 @@ void AddFeeTableRow(
 	Ui::AddTableRow(
 		table,
 		tr::lng_wallet_details_fee(),
-		Ui::MakeValueWithSmallButton(
+		Ui::MakeMultilineValueWithSmallButton(
 			table,
 			label,
 			rpl::single(u"?"_q),
@@ -4643,6 +4643,34 @@ void ShowWalletReceiveBox(
 	show->showBox(Box(WalletReceiveBox, session, address));
 }
 
+[[nodiscard]] Ui::LayerStackWidget *BoxLayerStack(
+		not_null<Ui::GenericBox*> box) {
+	auto stack = (Ui::LayerStackWidget*)nullptr;
+	for (auto parent = box->parentWidget(); parent && !stack;) {
+		parent = parent->parentWidget();
+		stack = dynamic_cast<Ui::LayerStackWidget*>(parent);
+	}
+	return stack;
+}
+
+void CloseByOutsideClick(not_null<Ui::GenericBox*> box) {
+	const auto layer = box->parentWidget();
+	const auto stack = BoxLayerStack(box);
+	if (!layer || !stack) {
+		return;
+	}
+	// WHY: a background press clears the whole stack, the Transaction box
+	// below included, so it is eaten while this box is the shown layer, and
+	// the close is postponed because it destroys this filter synchronously.
+	base::install_event_filter(box, stack, [=](not_null<QEvent*> e) {
+		if (e->type() != QEvent::MouseButtonPress || layer->isHidden()) {
+			return base::EventFilterResult::Continue;
+		}
+		Ui::PostponeCall(box, [=] { box->closeBox(); });
+		return base::EventFilterResult::Cancel;
+	});
+}
+
 void AddWalletFeaturesBody(
 		not_null<Ui::GenericBox*> box,
 		rpl::producer<QString> title,
@@ -4672,6 +4700,10 @@ void AddWalletFeaturesBody(
 	AddBoxCloseButton(box);
 
 	box->addButton(std::move(button), [=] { box->closeBox(); });
+
+	box->showFinishes() | rpl::take(1) | rpl::on_next([=] {
+		CloseByOutsideClick(box);
+	}, box->lifetime());
 }
 
 void WalletHowItWorksBox(
@@ -4713,34 +4745,6 @@ void WalletHowItWorksBox(
 		tr::lng_wallet_how_subtitle(),
 		features,
 		tr::lng_archive_hint_button());
-}
-
-[[nodiscard]] Ui::LayerStackWidget *BoxLayerStack(
-		not_null<Ui::GenericBox*> box) {
-	auto stack = (Ui::LayerStackWidget*)nullptr;
-	for (auto parent = box->parentWidget(); parent && !stack;) {
-		parent = parent->parentWidget();
-		stack = dynamic_cast<Ui::LayerStackWidget*>(parent);
-	}
-	return stack;
-}
-
-void CloseFirstGramsByOutsideClick(not_null<Ui::GenericBox*> box) {
-	const auto layer = box->parentWidget();
-	const auto stack = BoxLayerStack(box);
-	if (!layer || !stack) {
-		return;
-	}
-	// WHY: a background press clears the whole stack, the Transaction box
-	// below included, so it is eaten while this box is the shown layer, and
-	// the close is postponed because it destroys this filter synchronously.
-	base::install_event_filter(box, stack, [=](not_null<QEvent*> e) {
-		if (e->type() != QEvent::MouseButtonPress || layer->isHidden()) {
-			return base::EventFilterResult::Continue;
-		}
-		Ui::PostponeCall(box, [=] { box->closeBox(); });
-		return base::EventFilterResult::Cancel;
-	});
 }
 
 void WalletFirstGramsBox(
@@ -4804,10 +4808,6 @@ void WalletFirstGramsBox(
 			strong->promoSuggestions().dismiss(
 				Data::PromoSuggestions::SugWalletFirstIncomingTransfer());
 		}
-	}, box->lifetime());
-
-	box->showFinishes() | rpl::take(1) | rpl::on_next([=] {
-		CloseFirstGramsByOutsideClick(box);
 	}, box->lifetime());
 }
 
@@ -10409,9 +10409,13 @@ void WalletPhraseWarningBox(
 		left->resize(icon.size());
 		label->geometryValue(
 		) | rpl::on_next([=](const QRect &g) {
+			const auto oneLine = LabelLineHeight(st::walletPhraseWarnLabel);
+			const auto shift = (g.height() > oneLine)
+				? st::walletPhraseWarnIconSkip
+				: (g.height() - left->height()) / 2;
 			left->moveToLeft(
 				(g.left() - left->width()) / 2,
-				g.top() + st::walletPhraseWarnIconSkip);
+				g.top() + shift);
 		}, left->lifetime());
 	};
 	Ui::AddSkip(container);
