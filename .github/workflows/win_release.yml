@@ -391,7 +391,7 @@ jobs:
         shell: bash
         run: |
           [ -d "$LibrariesPath" ] || { echo "nothing to clean up"; exit 0; }
-          find $LibrariesPath '(' '(' ! '(' -name '*.lib' -o -name '*.a' -o -name '*.exe' -o -name '*.h' -o -name '*.hpp' -o -name '*.inc' -o -name '*.cmake' -o -name '*.pc' -o -path '*/include/*' -o -path '*/objects-*' -o -path '*/cache_keys/*' -o -path '*/patches/*' -o -path '*/qt6_windows7/*' -o -path '*/yy_thunks/*' -o -path '*/nv-codec-headers/*' -o -path '*/gas-preprocessor/*' ')' -type f ')' -o -empty ')' -delete || true
+          find $LibrariesPath '(' '(' ! '(' -name '*.lib' -o -name '*.a' -o -name '*.exe' -o -name '*.h' -o -name '*.hpp' -o -name '*.inc' -o -name '*.cmake' -o -name '*.pc' -o -path '*/include/*' -o -path '*/objects-*' -o -path '*/cache_keys/*' -o -path '*/patches/*' -o -path '*/qt6_windows7/*' -o -path '*/yy_thunks/*' -o -path '*/nv-codec-headers/*' -o -path '*/gas-preprocessor/*' -o -path '*/src/wallet_engine/*' ')' -type f ')' -o -empty ')' -delete || true
 
       - name: Save ThirdParty cache.
         if: always()
