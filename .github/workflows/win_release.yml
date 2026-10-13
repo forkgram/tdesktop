@@ -26,6 +26,12 @@ on:
         # 'off' must be quoted: YAML reads the bare word as boolean false, dropping it from the choices.
         options: ['off', scheduled, testing, released]
         default: 'off'
+      signing:
+        description: 'Sign binaries and pack the signed update file (full needs the key secrets).'
+        type: choice
+        # 'none' must be quoted: YAML reads the bare word as boolean false, dropping it from the choices.
+        options: ['none', full]
+        default: 'none'
   push:
     tags:
       - 'v*'
@@ -48,6 +54,10 @@ jobs:
     # This image already carries the v145 toolset and ARM64 ATL, so it needs no vs_buildtools step.
     runs-on: ${{ matrix.arch == 'arm64' && 'windows-11-vs2026-arm' || 'windows-latest' }}
     timeout-minutes: 360
+    # publish-telegram consumes only signing-run artifacts, so a personal build
+    # (which has no TG secrets either) must not queue that job at all.
+    outputs:
+      signing: ${{ env.SIGNING }}
 
     strategy:
       fail-fast: false
@@ -73,6 +83,8 @@ jobs:
       ONLY_CACHE: ${{ (github.event_name == 'schedule' || inputs.only_cache) && 'true' || 'false' }}
       ENABLE_LTO: ${{ inputs.lto && 'true' || 'false' }}
       PUBLISH_RELEASE: ${{ (inputs.publish_release || startsWith(github.ref, 'refs/tags/')) && 'true' || 'false' }}
+      # A tag push is a release run: sign and pack even though inputs.signing is empty then.
+      SIGNING: ${{ (startsWith(github.ref, 'refs/tags/') && 'full') || inputs.signing || 'none' }}
 
     defaults:
       run:
@@ -194,6 +206,7 @@ jobs:
         env:
           API_ID: ${{ secrets.TDESKTOP_API_ID }}
           API_HASH: ${{ secrets.TDESKTOP_API_HASH }}
+          SIGNING: ${{ env.SIGNING }}
           PACKER_KEY: ${{ secrets.PACKER_PRIVATE_KEY }}
           PACKER_BETA_KEY: ${{ secrets.PACKER_PRIVATE_BETA_KEY }}
           ALPHA_KEY: ${{ secrets.ALPHA_PRIVATE_KEY }}
@@ -212,28 +225,65 @@ jobs:
               prefix = '[[maybe_unused]] static ' if static else ''
               return '%sconst char *%s = "\\\n%s";\n' % (prefix, name, body)
 
+          # These two are needed by every build, signed or not: configure.py regex-scans
+          # this file for them, and the app will not run with an empty hash.
+          missing = {
+            'TDESKTOP_API_ID': os.environ['API_ID'],
+            'TDESKTOP_API_HASH': os.environ['API_HASH'],
+          }
+          empty = [name for name, value in missing.items() if not value.strip()]
+          if empty:
+            print('::error::these secrets are empty: ' + ', '.join(sorted(empty)))
+            raise SystemExit(1)
+
           # configure.py only regex-scans this one for the API credentials.
           (private / 'custom_api_id.h').write_text(
               'static const int32 ApiId = %s;\n'
               'static const char *ApiHash = "%s";\n'
               % (os.environ['API_ID'], os.environ['API_HASH']))
 
-          # packer.cpp declares both of these extern, so they must be defined here.
-          (private / 'packer_private.h').write_text(
-              literal('PrivateKey', os.environ['PACKER_KEY'])
-              + '\n'
-              + literal('PrivateBetaKey', os.environ['PACKER_BETA_KEY']))
+          if os.environ['SIGNING'] != 'full':
+            # No update package is produced from this run, but packer.cpp still includes
+            # both headers (Packer itself is built), so they are stubbed empty - the same
+            # shape packer.cpp uses for PACKER_DISABLE_PRIVATE.
+            (private / 'packer_private.h').write_text(
+                'const char *PrivateKey = "";\n'
+                'const char *PrivateBetaKey = "";\n')
+            (private / 'alpha_private.h').write_text(
+                '[[maybe_unused]] static const char *AlphaPrivateKey = "";\n')
+          else:
+            # Failing on a missing key here, not deep inside a one-hour compile or in
+            # Packer: an empty secret used to surface as a bare 'IndexError: list index
+            # out of range' from literal(), which says nothing about which key is missing.
+            missing = {
+              'PACKER_PRIVATE_KEY': os.environ['PACKER_KEY'],
+              'PACKER_PRIVATE_BETA_KEY': os.environ['PACKER_BETA_KEY'],
+              'ALPHA_PRIVATE_KEY': os.environ['ALPHA_KEY'],
+              'UPDATE_LOCAL_KEY': os.environ['UPDATE_LOCAL_KEY'],
+            }
+            empty = [name for name, value in missing.items() if not value.strip()]
+            if empty:
+              print('::error::signing=full but these secrets are empty: '
+                    + ', '.join(sorted(empty)))
+              raise SystemExit(1)
 
-          # packer.cpp's only use of this is commented out, and -Werror rejects an unused static.
-          (private / 'alpha_private.h').write_text(
-              literal('AlphaPrivateKey', os.environ['ALPHA_KEY'], static=True))
+            # packer.cpp declares both of these extern, so they must be defined here.
+            (private / 'packer_private.h').write_text(
+                literal('PrivateKey', os.environ['PACKER_KEY'])
+                + '\n'
+                + literal('PrivateBetaKey', os.environ['PACKER_BETA_KEY']))
 
-          # The v2 release key, passed to Packer as a file path, not compiled in.
-          (private / 'forkgram-release-2026a.pem').write_text(
-              os.environ['UPDATE_LOCAL_KEY'].strip() + '\n')
+            # packer.cpp's only use of this is commented out, and -Werror rejects an unused static.
+            (private / 'alpha_private.h').write_text(
+                literal('AlphaPrivateKey', os.environ['ALPHA_KEY'], static=True))
+
+            # The v2 release key, passed to Packer as a file path, not compiled in.
+            (private / 'forkgram-release-2026a.pem').write_text(
+                os.environ['UPDATE_LOCAL_KEY'].strip() + '\n')
           PY
 
-          # Presence of this file makes run_cmake.py build Packer (DESKTOP_APP_SPECIAL_TARGET).
+          # Two things read this file: run_cmake.py takes the special target from it and
+          # configure.py reads the credentials above out of DesktopPrivate because of it.
           echo "$BUILD_TARGET" > $TBUILD/$REPO_NAME/Telegram/build/target
 
           echo "DesktopPrivate contents:"
@@ -477,7 +527,7 @@ jobs:
           key: ${{ runner.OS }}-${{ matrix.arch }}-out-rel-${{ env.CACHE_KEY }}-${{ github.run_id }}
 
       - name: Set up the code signing certificate.
-        if: env.ONLY_CACHE == 'false'
+        if: env.ONLY_CACHE == 'false' && env.SIGNING == 'full'
         shell: pwsh
         run: |
           $pfx = Join-Path $env:RUNNER_TEMP 'codesign.pfx'
@@ -491,7 +541,7 @@ jobs:
           echo "Using $($tool.FullName)"
 
       - name: Sign the binaries.
-        if: env.ONLY_CACHE == 'false'
+        if: env.ONLY_CACHE == 'false' && env.SIGNING == 'full'
         shell: pwsh
         env:
           CODESIGN_PASSWORD: ${{ secrets.WIN_CODESIGN_PASSWORD }}
@@ -526,7 +576,7 @@ jobs:
           }
 
       - name: Pack the update file.
-        if: env.ONLY_CACHE == 'false'
+        if: env.ONLY_CACHE == 'false' && env.SIGNING == 'full'
         shell: pwsh
         run: |
           $release = "$env:TBUILD\$env:REPO_NAME\out\Release"
@@ -578,8 +628,12 @@ jobs:
 
           $setup = Join-Path $release "${env:SETUP_PREFIX}.${env:AppVersionStrFull}.exe"
           if (-not (Test-Path $setup)) { Write-Error "$setup was not produced"; exit 1 }
-          & $env:SIGNTOOL sign /f $env:CODESIGN_PFX /p $env:CODESIGN_PASSWORD /fd SHA256 $setup
-          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+          # Only the signing path has a certificate to sign with.
+          if ($env:SIGNING -eq 'full') {
+            & $env:SIGNTOOL sign /f $env:CODESIGN_PFX /p $env:CODESIGN_PASSWORD /fd SHA256 $setup
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          }
 
       - name: Collect the artifacts.
         if: env.ONLY_CACHE == 'false'
@@ -611,9 +665,13 @@ jobs:
           if (-not (Test-Path $installer)) { Write-Error "missing installer: $installer"; exit 1 }
           Copy-Item $installer (Join-Path $deploy $env:ASSET_INSTALLER)
 
-          $update = Join-Path $release "${env:UPD_PREFIX}${env:AppVersion}${env:UPD_SUFFIX}"
-          if (-not (Test-Path $update)) { Write-Error "missing update file: $update"; exit 1 }
-          Copy-Item $update $deploy
+          # The update file only exists on a signing run; skip the check, or a personal
+          # build (signing=none) fails here after a full hour of compiling.
+          if ($env:SIGNING -eq 'full') {
+            $update = Join-Path $release "${env:UPD_PREFIX}${env:AppVersion}${env:UPD_SUFFIX}"
+            if (-not (Test-Path $update)) { Write-Error "missing update file: $update"; exit 1 }
+            Copy-Item $update $deploy
+          }
 
           Get-ChildItem $deploy | Format-Table Name, Length
 
@@ -666,6 +724,7 @@ jobs:
     runs-on: ubuntu-latest
     if: >-
       needs.windows-release.result == 'success' &&
+      needs.windows-release.outputs.signing == 'full' &&
       (startsWith(github.ref, 'refs/tags/') ||
        (github.event_name == 'workflow_dispatch' && inputs.telegram != 'off'))
     environment: telegram-publish
