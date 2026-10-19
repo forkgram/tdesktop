@@ -3,6 +3,8 @@ Author: 23rd.
 */
 #pragma once
 
+#include "rpl/variable.h"
+
 namespace Core {
 
 class ForkSettings final {
@@ -125,6 +127,14 @@ public:
 	[[nodiscard]] bool hideFromBlockedUsers() const;
 	void setHideFromBlockedUsers(bool newValue);
 
+	[[nodiscard]] bool hideVoiceVideoButton() const {
+		return _hideVoiceVideoButton.current();
+	}
+	[[nodiscard]] rpl::producer<bool> hideVoiceVideoButtonChanges() const {
+		return _hideVoiceVideoButton.changes();
+	}
+	void setHideVoiceVideoButton(bool newValue);
+
 private:
 	bool _squareUserpics = false;
 	bool _audioFade = true;
@@ -149,6 +159,7 @@ private:
 	QString _botsPlatforms;
 	bool _archivedStoriesAreHidden = false;
 	bool _hideFromBlockedUsers = false;
+	rpl::variable<bool> _hideVoiceVideoButton = false;
 
 };
 
