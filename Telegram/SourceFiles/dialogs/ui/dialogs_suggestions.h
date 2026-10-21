@@ -87,6 +87,10 @@ public:
 
 	[[nodiscard]] bool persist() const;
 	void clearPersistance();
+	void persistUntilClickOutside();
+	[[nodiscard]] rpl::producer<> persistReleased() const {
+		return _persistReleased.events();
+	}
 
 	[[nodiscard]] rpl::producer<not_null<PeerData*>> topPeerChosen() const {
 		return _topPeerChosen.events();
@@ -271,6 +275,8 @@ private:
 
 	base::flat_map<Key, MediaList> _mediaLists;
 	rpl::event_stream<> _clearSearchQueryRequests;
+	rpl::lifetime _persistLifetime;
+	rpl::event_stream<> _persistReleased;
 	QString _searchQuery;
 	base::Timer _searchQueryTimer;
 

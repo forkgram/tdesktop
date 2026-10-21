@@ -116,6 +116,15 @@ jobs:
           }
           Show-Free 'after'
 
+      # Two /MP2 compilers on heavy files exhaust 16 GB RAM (C1060).
+      - name: Extend the pagefile.
+        if: matrix.arch != 'arm64'
+        uses: al-cheb/configure-pagefile-action@v1.3
+        with:
+          minimum-size: 16GB
+          maximum-size: 32GB
+          disk-root: 'C:'
+
       # Build on D: (C: is too small); keep the symlink for actions/checkout and short Qt paths.
       - name: Prepare directories.
         run: |
