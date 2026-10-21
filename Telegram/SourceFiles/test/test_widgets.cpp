@@ -31,12 +31,16 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtGui/QWindow>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QTextEdit>
+
+#ifndef DESKTOP_APP_DISABLE_PRIVATE_QT_API
 #include <private/qdnd_p.h>
 #include <qpa/qwindowsysteminterface.h>
+#endif // !DESKTOP_APP_DISABLE_PRIVATE_QT_API
 
 namespace Test {
 namespace {
 
+#ifndef DESKTOP_APP_DISABLE_PRIVATE_QT_API
 // Withholds every drag event from any receiver other than |target| for its
 // own lifetime. Returning true from an application filter skips delivery,
 // and QApplication::notify still climbs an un-accepted DragEnter past it,
@@ -58,6 +62,7 @@ private:
 	QStringList _shielded;
 
 };
+#endif // !DESKTOP_APP_DISABLE_PRIVATE_QT_API
 
 struct LiveWidgetEntry {
 	QPointer<QWidget> widget;
@@ -100,6 +105,26 @@ void DeliverPointerLeave(const base::weak_qptr<QWidget> &widget) {
 	DeliverAndSettle(widget, leave);
 }
 
+// The one event Drag's press, moves and release are built from. Each event
+// is still built right before its own delivery, so mapToGlobal is read only
+// after the previous event settled.
+[[nodiscard]] QMouseEvent MakeDragEvent(
+		not_null<QWidget*> widget,
+		QEvent::Type type,
+		QPoint local,
+		Qt::MouseButton button,
+		Qt::KeyboardModifiers modifiers) {
+	return QMouseEvent(
+		type,
+		QPointF(local),
+		QPointF(widget->mapToGlobal(local)),
+		button,
+		(type == QEvent::MouseButtonRelease)
+			? Qt::NoButton
+			: Qt::LeftButton,
+		modifiers);
+}
+
 [[nodiscard]] int &ActivationAttempts() {
 	static auto result = 0;
 	return result;
@@ -131,6 +156,7 @@ void DeliverPointerLeave(const base::weak_qptr<QWidget> &widget) {
 }
 
 void InjectActivation(QWindow *window) {
+#ifndef DESKTOP_APP_DISABLE_PRIVATE_QT_API
 #if QT_VERSION >= QT_VERSION_CHECK(6, 3, 0)
 	QWindowSystemInterface::handleFocusWindowChanged(
 		window,
@@ -141,6 +167,7 @@ void InjectActivation(QWindow *window) {
 		Qt::ActiveWindowFocusReason);
 #endif // Qt < 6.3.0
 	QWindowSystemInterface::flushWindowSystemEvents();
+#endif // !DESKTOP_APP_DISABLE_PRIVATE_QT_API
 }
 
 [[nodiscard]] QString WheelStopRefusal(
@@ -166,6 +193,7 @@ void InjectActivation(QWindow *window) {
 		.arg(viewport->acceptDrops() ? 1 : 0);
 }
 
+#ifndef DESKTOP_APP_DISABLE_PRIVATE_QT_API
 [[nodiscard]] QString ShieldedRefusal(const QStringList &shielded) {
 	return u"the field's editor did not accept the enter; the enter was "
 		u"withheld from %1 other widget(s) Qt would have offered it to: "
@@ -215,6 +243,7 @@ bool DropShield::eventFilter(QObject *receiver, QEvent *event) {
 	}
 	return true;
 }
+#endif // !DESKTOP_APP_DISABLE_PRIVATE_QT_API
 
 [[nodiscard]] QString ActivationWindowIdentity(QWindow *window) {
 	if (!window) {
@@ -385,31 +414,54 @@ void Drag(
 		QPoint to,
 		int steps,
 		Qt::KeyboardModifiers modifiers) {
+	if (DragPressAndMoves(widget, from, to, steps, modifiers)) {
+		DragRelease(widget, to, modifiers);
+	}
+}
+
+bool DragPressAndMoves(
+		not_null<QWidget*> widget,
+		QPoint from,
+		QPoint to,
+		int steps,
+		Qt::KeyboardModifiers modifiers) {
 	const auto alive = base::make_weak(widget);
-	const auto makeEvent = [&](QEvent::Type type, QPoint local, auto button) {
-		return QMouseEvent(
-			type,
-			QPointF(local),
-			QPointF(widget->mapToGlobal(local)),
-			button,
-			(type == QEvent::MouseButtonRelease)
-				? Qt::NoButton
-				: Qt::LeftButton,
-			modifiers);
-	};
-	auto press = makeEvent(QEvent::MouseButtonPress, from, Qt::LeftButton);
+	auto press = MakeDragEvent(
+		widget,
+		QEvent::MouseButtonPress,
+		from,
+		Qt::LeftButton,
+		modifiers);
 	if (!DeliverAndSettle(alive, press)) {
-		return;
+		return false;
 	}
 	steps = std::max(steps, 1);
 	for (auto step = 1; step <= steps; ++step) {
 		const auto local = from + ((to - from) * step) / steps;
-		auto move = makeEvent(QEvent::MouseMove, local, Qt::NoButton);
+		auto move = MakeDragEvent(
+			widget,
+			QEvent::MouseMove,
+			local,
+			Qt::NoButton,
+			modifiers);
 		if (!DeliverAndSettle(alive, move)) {
-			return;
+			return false;
 		}
 	}
-	auto release = makeEvent(QEvent::MouseButtonRelease, to, Qt::LeftButton);
+	return true;
+}
+
+void DragRelease(
+		not_null<QWidget*> widget,
+		QPoint to,
+		Qt::KeyboardModifiers modifiers) {
+	const auto alive = base::make_weak(widget);
+	auto release = MakeDragEvent(
+		widget,
+		QEvent::MouseButtonRelease,
+		to,
+		Qt::LeftButton,
+		modifiers);
 	DeliverAndSettle(alive, release);
 	DeliverPointerLeave(alive);
 }
@@ -483,8 +535,6 @@ TextDrop DropText(not_null<Ui::InputField*> field, const QString &text) {
 	const auto alive = base::make_weak(field.get());
 	const auto raw = field->rawTextEdit();
 	const auto viewport = raw->viewport();
-	const auto viewportAlive = base::make_weak(viewport);
-	const auto viewportObject = static_cast<QObject*>(viewport);
 	result.target = WidgetDescription(viewport);
 	result.textLength = text.size();
 	result.fieldLengthBefore = field->getLastText().size();
@@ -499,6 +549,14 @@ TextDrop DropText(not_null<Ui::InputField*> field, const QString &text) {
 		readField();
 		return result;
 	}
+#ifdef DESKTOP_APP_DISABLE_PRIVATE_QT_API
+	result.refusal = TextDropRefusal::Unsupported;
+	result.reason = u"drop emulation needs private Qt API"_q;
+	readField();
+	return result;
+#else // DESKTOP_APP_DISABLE_PRIVATE_QT_API
+	const auto viewportAlive = base::make_weak(viewport);
+	const auto viewportObject = static_cast<QObject*>(viewport);
 	auto mime = QMimeData();
 	mime.setText(text);
 	const auto point = raw->cursorRect().center();
@@ -553,6 +611,7 @@ TextDrop DropText(not_null<Ui::InputField*> field, const QString &text) {
 		result.delivered = true;
 	}
 	return result;
+#endif // !DESKTOP_APP_DISABLE_PRIVATE_QT_API
 }
 
 void PressKey(
@@ -651,6 +710,7 @@ QString TextDropRefusalName(TextDropRefusal refusal) {
 		return u"viewport-refuses-drops"_q;
 	case TextDropRefusal::EnterNotAccepted: return u"enter-not-accepted"_q;
 	case TextDropRefusal::DropNotAccepted: return u"drop-not-accepted"_q;
+	case TextDropRefusal::Unsupported: return u"unsupported"_q;
 	}
 	Unexpected("Refusal in Test::TextDropRefusalName.");
 }

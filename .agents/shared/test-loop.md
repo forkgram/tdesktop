@@ -692,8 +692,10 @@ command, environment, exit-code, log, artifact and control evidence.
 - **Codegen does not track resource mtimes.** If the task changed only a resource the style codegen
   consumes (an icon `.svg`, etc.) without touching a `.style`, an incremental build will NOT re-pack
   it and the binary keeps the OLD asset. Before building such a task force regeneration — touch the
-  referencing `.style` (or clean the codegen output) — so the change actually ships. A render that
-  shows no difference from before is the symptom of skipping this.
+  referencing `.style` (or clean the codegen output) — so the change actually ships. On macOS never
+  force regeneration with an Xcode clean: see `AGENTS.md` ("### Build Commands" under
+  "## Build Configuration"). A render that shows no difference from before is the symptom of
+  skipping this.
 - Run: execute the workspace helper's `test-run` command with `EXE` and `EVIDENCE_DIR`. One call
   performs the SETUP steps (Test account), creates `EVIDENCE_DIR`, path-scope-kills stragglers,
   then, for a reused marked-live account, moves a non-empty live `tdata/working` to
@@ -972,16 +974,24 @@ implementation or overlay verdict:
   `Local::readLangPack()`;
 - the same signature occurs on two launches.
 
-Before changing recovery strategies, preserve the current overlay and account,
-stop only the exact-path app,
-follow the portable-folder safety-copy procedure in `AGENTS.md`, then run one full Xcode Debug
-clean followed by `BUILD` (the configured-tree clean is normally
-`cmake --build out --config Debug --target clean`). Restore only portable folders missing after
-the clean, never overwrite survivors, and retain the external backup through one successful
-post-build launch. Rerun the same scenario once. Record the preceding runs as `TEST_FLAW` caused
-by stale generated-language objects; do not spend an implementation attempt or re-author the
-overlay. If the identical signature remains after the single clean rebuild, resume normal crash
-classification and the directness ladder. Never loop clean rebuilds.
+Before changing recovery strategies, preserve the current overlay and account and stop only the
+exact-path app. Then run the clean rebuild in `AGENTS.md` ("### Forcing a full recompile on macOS"
+under "## Troubleshooting") once, exactly as written there, its precondition and checks included.
+It deletes only the intermediate tree `out/build`, never runs an Xcode clean, and
+rebuilds with `BUILD`. Its check before the rebuild must show that `out/build`, which holds every
+intermediate object file, is gone; its check after the rebuild must show that the rebuild
+compiled every object file and that every entry `out/Debug` held before is still present. The
+step has no accepted failure: any other result stops the recovery. Do not substitute an Xcode
+clean (`--target clean`, `--clean-first` or a Clean in the Xcode app): `AGENTS.md`
+("### Build Commands" under "## Build Configuration") explains how `--target clean` and
+`--target Telegram --clean-first` can delete `out/Debug` with every portable folder, and why an
+exit 65 from `--target clean` does not prove that `out/Debug` survived. Never mark `out/Debug`
+deletable (`xattr -w com.apple.xcode.CreatedByBuildSystem true`, the hint in Xcode's refusal to
+delete it), and never move, rename or remove a portable folder or any other entry of `out/Debug`
+to make a clean succeed. Rerun the same scenario once. Record the preceding runs as `TEST_FLAW`
+caused by stale generated-language objects; do not spend an implementation attempt or re-author
+the overlay. If the identical signature remains after the single clean rebuild, resume normal
+crash classification and the directness ladder. Never loop clean rebuilds.
 
 ### Hangs & freezes (two layers, because they have two causes)
 

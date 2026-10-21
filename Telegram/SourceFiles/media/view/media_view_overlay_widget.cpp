@@ -140,24 +140,6 @@ namespace Media {
 namespace View {
 namespace {
 
-struct RecognitionId {
-	uint64 sessionUniqueId = 0;
-	PhotoId photoId = 0;
-	DocumentId documentId = 0;
-
-	friend inline auto operator<=>(RecognitionId, RecognitionId) = default;
-};
-
-using RecognitionResult = Platform::TextRecognition::Result;
-using RecognitionCacheMap = base::flat_map<RecognitionId, RecognitionResult>;
-
-[[nodiscard]] RecognitionCacheMap *RecognitionCache() {
-	static auto cache = Platform::TextRecognition::IsAvailable()
-		? std::make_unique<base::flat_map<RecognitionId, RecognitionResult>>()
-		: nullptr;
-	return cache.get();
-}
-
 [[nodiscard]] int LayoutIndependentKey(not_null<QKeyEvent*> e) {
 	if constexpr (Platform::IsWindows()) {
 		const auto native = int(e->nativeVirtualKey());
@@ -946,15 +928,12 @@ OverlayWidget::OverlayWidget()
 
 	// Toggling between windowed and fullscreen changes the window flags,
 	// and that is a path where Qt recreates the native window, dropping
-	// everything set on the old one. Reapply on every handle change,
-	// and after the app-wide protection is applied to all windows.
-	rpl::combine(
-		_window->winIdValue(),
-		Core::App().screenshotProtection().activeValue()
-	) | rpl::on_next([=](WId, bool active) {
+	// everything set on the old one. Reapply on every handle change.
+	_window->winIdValue(
+	) | rpl::on_next([=](WId) {
 		Platform::SetWindowScreenshotProtection(
 			_window,
-			_screenshotProtected || active);
+			_screenshotProtected);
 	}, lifetime());
 
 	_window->screenValue(
@@ -6159,8 +6138,7 @@ void OverlayWidget::refreshScreenshotProtection() {
 	_screenshotProtected = contentNeedsScreenshotProtection();
 	Platform::SetWindowScreenshotProtection(
 		_window,
-		(_screenshotProtected
-			|| Core::App().screenshotProtection().active()));
+		_screenshotProtected);
 }
 
 void OverlayWidget::refreshSystemMediaControls() {
@@ -6448,7 +6426,7 @@ void OverlayWidget::tryStartTextRecognition() {
 
 Ui::GL::ChosenRenderer OverlayWidget::chooseRenderer(
 		Ui::GL::Backend backend) {
-#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
+#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0) && !defined DESKTOP_APP_DISABLE_PRIVATE_QT_API
 	if (backend == Ui::GL::Backend::QRhi) {
 		_opengl = true;
 		return {
@@ -6456,7 +6434,7 @@ Ui::GL::ChosenRenderer OverlayWidget::chooseRenderer(
 			.backend = Ui::GL::Backend::QRhi,
 		};
 	}
-#endif // Qt >= 6.7
+#endif // Qt >= 6.7 && !DESKTOP_APP_DISABLE_PRIVATE_QT_API
 	_opengl = (backend == Ui::GL::Backend::OpenGL);
 	return {
 		.renderer = (_opengl

@@ -231,7 +231,13 @@ template <typename T>
 [[nodiscard]] std::shared_ptr<const Iv::RichPage> ParsedRichPage(
 		not_null<Main::Session*> session,
 		const MTPRichMessage *richMessage) {
-	return richMessage ? Iv::ParseRichPage(session, *richMessage) : nullptr;
+	if (!richMessage) {
+		return nullptr;
+	}
+	return Iv::ParseRichPage(
+		session,
+		*richMessage,
+		Iv::RichParseMode::Quotable);
 }
 
 [[nodiscard]] std::shared_ptr<const Iv::RichPage> BestRichPage(
@@ -579,7 +585,9 @@ HistoryItem::HistoryItem(
 		_flags |= MessageFlag::Legacy;
 		createComponents(data);
 		if (const auto richMessage = data.vrich_message()) {
-			const auto richPage = Iv::ParseRichPage(&history->session(), *richMessage);
+			const auto richPage = ParsedRichPage(
+				&history->session(),
+				richMessage);
 			setRichPage(richPage);
 			setText(Iv::FlattenRichPageSummary(richPage));
 		} else {
@@ -619,7 +627,9 @@ HistoryItem::HistoryItem(
 			}
 		}
 		if (const auto richMessage = data.vrich_message()) {
-			const auto richPage = Iv::ParseRichPage(&history->session(), *richMessage);
+			const auto richPage = ParsedRichPage(
+				&history->session(),
+				richMessage);
 			setRichPage(richPage);
 			setText(Iv::FlattenRichPageSummary(richPage));
 		} else {
@@ -1231,13 +1241,6 @@ void HistoryItem::updateServiceDependent(bool force) {
 	}
 }
 
-MsgId HistoryItem::dependencyMsgId() const {
-	if (auto dependent = GetServiceDependentData()) {
-		return dependent->msgId;
-	}
-	return replyToId();
-}
-
 void HistoryItem::checkBuyButton() {
 	if (const auto invoice = _media ? _media->invoice() : nullptr) {
 		if (invoice->receiptMsgId) {
@@ -1517,15 +1520,6 @@ bool HistoryItem::areCommentsUnread() const {
 			peerFromChannel(views->commentsMegagroupId))
 		: _history.get();
 	return !group || (views->commentsMaxId > group->inboxReadTillId());
-}
-
-FullMsgId HistoryItem::commentsItemId() const {
-	if (const auto views = Get<HistoryMessageViews>()) {
-		return FullMsgId(
-			PeerId(views->commentsMegagroupId),
-			views->commentsRootId);
-	}
-	return FullMsgId();
 }
 
 void HistoryItem::setCommentsItemId(FullMsgId id) {
@@ -2405,13 +2399,6 @@ Data::ForumTopic *HistoryItem::topic() const {
 		}
 	}
 	return nullptr;
-}
-
-void HistoryItem::refreshMainView() {
-	if (const auto view = mainView()) {
-		_history->owner().notifyHistoryChangeDelayed(_history);
-		view->refreshInBlock();
-	}
 }
 
 void HistoryItem::removeMainView(Data::ViewRemovalReason reason) {
@@ -4110,6 +4097,27 @@ bool HistoryItem::showForwardsFromSender(
 			|| forwarded->imported);
 }
 
+bool HistoryItem::displayForwardedFrom() const {
+	if (const auto forwarded = Get<HistoryMessageForwarded>()) {
+		if (forwarded->story) {
+			return true;
+		} else if (showForwardsFromSender(forwarded)) {
+			return forwarded->savedFromHiddenSenderInfo
+				|| (forwarded->savedFromSender
+					&& (forwarded->savedFromSender
+						!= forwarded->originalSender));
+		}
+		if (const auto sender = discussionPostOriginalSender()) {
+			if (sender == forwarded->originalSender) {
+				return false;
+			}
+		}
+		const auto media = this->media();
+		return !media || !media->dropForwardedInfo();
+	}
+	return false;
+}
+
 not_null<PeerData*> HistoryItem::fromOriginal() const {
 	if (const auto forwarded = Get<HistoryMessageForwarded>()) {
 		if (forwarded->originalSender) {
@@ -4681,6 +4689,7 @@ FullReplyTo HistoryItem::replyTo() const {
 			result.messageId = { replyToPeer, id };
 			result.quote = fields.quote;
 			result.quoteOffset = fields.quoteOffset;
+			result.richQuote = fields.richQuote;
 		}
 		if (const auto id = fields.storyId) {
 			result.storyId = { replyToPeer, id };
@@ -5099,7 +5108,8 @@ void HistoryItem::createComponents(CreateConfig &&config) {
 	if (config.reply.messageId
 		|| config.reply.externalSenderId
 		|| !config.reply.externalSenderName.isEmpty()
-		|| config.reply.storyId) {
+		|| config.reply.storyId
+		|| config.reply.richQuote) {
 		mask |= HistoryMessageReply::Bit();
 	}
 	if (config.viaBotId) {
@@ -5469,7 +5479,11 @@ void HistoryItem::createComponentsHelper(HistoryItemCommonFields &&fields) {
 				|| (to && to->Has<HistoryServiceTopicInfo>())
 				|| (forum && forum->creating(config.reply.topMessageId)));
 		config.reply.topicPost = topicPost ? 1 : 0;
-		config.reply.manualQuote = replyTo.quote.empty() ? 0 : 1;
+		config.reply.richQuote = replyTo.messageId
+			? replyTo.richQuote
+			: nullptr;
+		config.reply.manualQuote = (config.reply.richQuote
+			|| !replyTo.quote.empty()) ? 1 : 0;
 		config.reply.quoteOffset = replyTo.quoteOffset;
 		config.reply.quote = std::move(replyTo.quote);
 	}
@@ -6400,6 +6414,23 @@ void HistoryItem::setServiceMessageByAction(const MTPmessageAction &action) {
 
 	auto prepareTonConnectRequest = [&](const MTPDmessageActionWalletTonConnectRequest &) {
 		return prepareTonConnectRequestText();
+	};
+
+	auto prepareNoPaidMessagesTokenUsed = [this](const MTPDmessageActionNoPaidMessagesTokenUsed &) {
+		auto result = PreparedServiceText();
+		if (out()) {
+			result.text = tr::lng_action_you_no_paid_token_used(
+				tr::now,
+				tr::marked);
+		} else {
+			result.links.push_back(fromLink());
+			result.text = tr::lng_action_no_paid_token_used(
+				tr::now,
+				lt_from,
+				fromLinkText(), // Link 1.
+				tr::marked);
+		}
+		return result;
 	};
 
 	auto preparePaymentSentMe = [&](const MTPDmessageActionPaymentSentMe &data) {
@@ -8066,6 +8097,7 @@ void HistoryItem::setServiceMessageByAction(const MTPmessageAction &action) {
 		prepareChangeCommunity,
 		prepareGramTransfer,
 		prepareTonConnectRequest,
+		prepareNoPaidMessagesTokenUsed,
 		PrepareErrorText<MTPDmessageActionEmpty>));
 
 	processAction(action);

@@ -443,6 +443,10 @@ void IgnoreApplicationActivationRightNow() {
 	objc_ignoreApplicationActivationRightNow();
 }
 
+int64 ClipboardChangeCount() {
+	return [[NSPasteboard generalPasteboard] changeCount];
+}
+
 void AutostartToggle(bool enabled, Fn<void(bool)> done) {
 	if (done) {
 		done(false);

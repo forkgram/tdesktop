@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/algorithm.h"
 #include "base/options.h"
 #include "base/unixtime.h"
+#include "iv/iv_rich_page.h"
 #include "lang/lang_keys.h"
 #include "ui/effects/ripple_animation.h"
 #include "ui/effects/spoiler_mess.h"
@@ -69,6 +70,10 @@ namespace {
 
 const auto kPsaForwardedPrefix = "cloud_lng_forwarded_psa_";
 
+[[nodiscard]] bool IsForwardedFromChannel(const PeerData *sender) {
+	return sender && sender->isChannel() && !sender->isMegagroup();
+}
+
 base::options::toggle FastButtonsModeOption({
 	.id = kOptionFastButtonsMode,
 	.name = "Fast buttons mode",
@@ -105,6 +110,16 @@ base::options::toggle FastButtonsModeOption({
 		lt_task,
 		names.back(),
 		tr::marked);
+}
+
+[[nodiscard]] std::shared_ptr<const Iv::RichQuote> RichQuoteFromMTP(
+		not_null<Main::Session*> session,
+		const MTPVector<MTPRichText> &fragments,
+		tl::conditional<MTPint> offset) {
+	return Iv::ParseRichQuote(
+		session,
+		fragments,
+		offset ? std::make_optional(offset->v) : std::nullopt);
 }
 
 } // namespace
@@ -283,37 +298,18 @@ bool HiddenSenderInfo::paintCustomUserpic(
 	return valid;
 }
 
-void HistoryMessageForwarded::create(
+TextWithEntities HistoryMessageForwarded::phrase(
 		const HistoryMessageVia *via,
-		not_null<const HistoryItem*> item) const {
-	auto phrase = TextWithEntities();
-	auto context = Core::TextContext({
-		.session = &item->history()->session(),
-	});
-	const auto fromChannel = originalSender
-		&& originalSender->isChannel()
-		&& !originalSender->isMegagroup();
+		TextWithEntities userpic) const {
+	const auto fromChannel = IsForwardedFromChannel(originalSender);
 	const auto name = TextWithEntities{
 		.text = (originalSender
 			? originalSender->name()
 			: originalHiddenSenderInfo->name)
 	};
-	if (const auto copy = originalSender) {
-		context.repaint = [=] {
-			// It is important to capture here originalSender by value,
-			// not capture the HistoryMessageForwarded* and read the
-			// originalSender field, because the components themselves
-			// get moved from place to place and the captured `this`
-			// pointer may become invalid, resulting in a crash.
-			copy->owner().requestItemRepaint(item);
-		};
-		phrase = Ui::Text::SingleCustomEmoji(
-			copy->owner().customEmojiManager().peerUserpicEmojiData(
-				copy,
-				st::fwdTextUserpicPadding));
-	}
+	auto result = std::move(userpic);
 	if (!originalPostAuthor.isEmpty()) {
-		phrase.append(
+		result.append(
 			tr::lng_forwarded_signed(
 				tr::now,
 				lt_channel,
@@ -322,31 +318,31 @@ void HistoryMessageForwarded::create(
 				{ .text = originalPostAuthor },
 				tr::marked));
 	} else {
-		phrase.append(name);
+		result.append(name);
 	}
 	if (story) {
-		phrase = tr::lng_forwarded_story(
+		result = tr::lng_forwarded_story(
 			tr::now,
 			lt_user,
-			Ui::Text::Wrapped(phrase, EntityType::CustomUrl, QString()), // Link 1.
+			Ui::Text::Wrapped(result, EntityType::CustomUrl, QString()), // Link 1.
 			tr::marked);
 	} else if (via && psaType.isEmpty()) {
 		const auto linkData = tr::link(
 			QString(),
 			1).entities.front().data(); // Link 1.
 		if (fromChannel) {
-			phrase = tr::lng_forwarded_channel_via(
+			result = tr::lng_forwarded_channel_via(
 				tr::now,
 				lt_channel,
-				Ui::Text::Wrapped(phrase, EntityType::CustomUrl, linkData), // Link 1.
+				Ui::Text::Wrapped(result, EntityType::CustomUrl, linkData), // Link 1.
 				lt_inline_bot,
 				tr::link('@' + via->bot->username(), 2), // Link 2.
 				tr::marked);
 		} else {
-			phrase = tr::lng_forwarded_via(
+			result = tr::lng_forwarded_via(
 				tr::now,
 				lt_user,
-				Ui::Text::Wrapped(phrase, EntityType::CustomUrl, linkData), // Link 1.
+				Ui::Text::Wrapped(result, EntityType::CustomUrl, linkData), // Link 1.
 				lt_inline_bot,
 				tr::link('@' + via->bot->username(), 2), // Link 2.
 				tr::marked);
@@ -358,45 +354,75 @@ void HistoryMessageForwarded::create(
 				: Lang::GetNonDefaultValue(
 					kPsaForwardedPrefix + psaType.toUtf8());
 			if (!custom.isEmpty()) {
-				custom = custom.replace("{channel}", phrase.text);
-				const auto index = int(custom.indexOf(phrase.text));
-				const auto size = int(phrase.text.size());
-				phrase = TextWithEntities{
+				custom = custom.replace("{channel}", result.text);
+				const auto index = int(custom.indexOf(result.text));
+				const auto size = int(result.text.size());
+				result = TextWithEntities{
 					.text = custom,
 					.entities = {{ EntityType::CustomUrl, index, size, {} }},
 				};
 			} else {
-				phrase = (psaType.isEmpty()
+				result = (psaType.isEmpty()
 					? tr::lng_forwarded_channel
 					: tr::lng_forwarded_psa_default)(
 						tr::now,
 						lt_channel,
 						Ui::Text::Wrapped(
-							phrase,
+							result,
 							EntityType::CustomUrl,
 							QString()), // Link 1.
 						tr::marked);
 			}
 		} else {
-			phrase = tr::lng_forwarded(
+			result = tr::lng_forwarded(
 				tr::now,
 				lt_user,
-				Ui::Text::Wrapped(phrase, EntityType::CustomUrl, QString()), // Link 1.
+				Ui::Text::Wrapped(result, EntityType::CustomUrl, QString()), // Link 1.
 				tr::marked);
 		}
 	}
 	if (originalDate != TimeId(0)) {
-		phrase.append(QString(". Date: ")
+		result.append(QString(". Date: ")
 			+ base::unixtime::parse(originalDate).toString(
 				QLocale::system().dateTimeFormat(QLocale::ShortFormat)));
 	}
-	text.setMarkedText(st::fwdTextStyle, phrase, kMarkupTextOptions, context);
+	return result;
+}
 
-	text.setLink(1, fromChannel
-		? JumpToMessageClickHandler(originalSender, originalId)
-		: originalSender
-		? originalSender->openLink()
-		: HiddenSenderInfo::ForwardClickHandler());
+void HistoryMessageForwarded::create(
+		const HistoryMessageVia *via,
+		not_null<const HistoryItem*> item) const {
+	auto context = Core::TextContext({
+		.session = &item->history()->session(),
+	});
+	auto userpic = tr::marked();
+	if (const auto copy = originalSender) {
+		context.repaint = [=] {
+			// It is important to capture here originalSender by value,
+			// not capture the HistoryMessageForwarded* and read the
+			// originalSender field, because the components themselves
+			// get moved from place to place and the captured `this`
+			// pointer may become invalid, resulting in a crash.
+			copy->owner().requestItemRepaint(item);
+		};
+		userpic = Ui::Text::SingleCustomEmoji(
+			copy->owner().customEmojiManager().peerUserpicEmojiData(
+				copy,
+				st::fwdTextUserpicPadding));
+	}
+	text.setMarkedText(
+		st::fwdTextStyle,
+		phrase(via, std::move(userpic)),
+		kMarkupTextOptions,
+		context);
+
+	text.setLink(
+		1,
+		IsForwardedFromChannel(originalSender)
+			? JumpToMessageClickHandler(originalSender, originalId)
+			: originalSender
+			? originalSender->openLink()
+			: HiddenSenderInfo::ForwardClickHandler());
 	if (via) {
 		text.setLink(2, via->link);
 	}
@@ -405,6 +431,7 @@ void HistoryMessageForwarded::create(
 ReplyFields ReplyFields::clone(not_null<HistoryItem*> parent) const {
 	return {
 		.quote = quote,
+		.richQuote = richQuote,
 		.externalMedia = (externalMedia
 			? externalMedia->clone(parent)
 			: nullptr),
@@ -420,6 +447,20 @@ ReplyFields ReplyFields::clone(not_null<HistoryItem*> parent) const {
 		.quoteOffset = quoteOffset,
 		.manualQuote = manualQuote,
 		.topicPost = topicPost,
+	};
+}
+
+const TextWithEntities &ReplyFields::displayQuote() const {
+	return richQuote ? richQuote->text : quote;
+}
+
+MessageHighlightId ReplyFields::highlight() const {
+	return {
+		.quote = manualQuote ? quote : TextWithEntities(),
+		.quoteOffset = int(quoteOffset),
+		.todoItemId = todoItemId,
+		.pollOption = pollOption,
+		.richQuote = manualQuote ? richQuote : nullptr,
 	};
 }
 
@@ -459,13 +500,22 @@ ReplyFields ReplyFieldsFromMTP(
 		if (const auto media = data.vreply_media()) {
 			result.externalMedia = HistoryItem::CreateMedia(item, *media);
 		}
-		result.quote = TextWithEntities{
-			qs(data.vquote_text().value_or_empty()),
-			Api::EntitiesFromMTP(
+		// WHY: the server rejects a flat copy of a rich quote, so the flat
+		// fields stay empty and replyTo() resends it only as richQuote.
+		if (const auto rich = data.vquote_rich()) {
+			result.richQuote = RichQuoteFromMTP(
 				&owner->session(),
-				data.vquote_entities().value_or_empty()),
-		};
-		result.quoteOffset = data.vquote_offset().value_or_empty();
+				*rich,
+				data.vquote_offset());
+		} else {
+			result.quote = TextWithEntities{
+				qs(data.vquote_text().value_or_empty()),
+				Api::EntitiesFromMTP(
+					&owner->session(),
+					data.vquote_entities().value_or_empty()),
+			};
+			result.quoteOffset = data.vquote_offset().value_or_empty();
+		}
 		result.manualQuote = data.is_quote() ? 1 : 0;
 		return result;
 	}, [&](const MTPDmessageReplyStoryHeader &data) {
@@ -493,13 +543,22 @@ FullReplyTo ReplyToFromMTP(
 			result.messageId.peer = parsed->id;
 		}
 		result.topicRootId = data.vtop_msg_id().value_or_empty();
-		result.quote = TextWithEntities{
-			qs(data.vquote_text().value_or_empty()),
-			Api::EntitiesFromMTP(
-				&history->session(),
-				data.vquote_entities().value_or_empty()),
-		};
-		result.quoteOffset = data.vquote_offset().value_or_empty();
+		if (const auto rich = data.vquote_rich()) {
+			if (!rich->v.isEmpty()) {
+				result.richQuote = RichQuoteFromMTP(
+					&history->session(),
+					*rich,
+					data.vquote_offset());
+			}
+		} else {
+			result.quote = TextWithEntities{
+				qs(data.vquote_text().value_or_empty()),
+				Api::EntitiesFromMTP(
+					&history->session(),
+					data.vquote_entities().value_or_empty()),
+			};
+			result.quoteOffset = data.vquote_offset().value_or_empty();
+		}
 		result.todoItemId = data.vtodo_item_id().value_or_empty();
 		result.pollOption = data.vpoll_option().value_or_empty();
 		return result;
@@ -580,7 +639,7 @@ void HistoryMessageReply::updateData(
 	}
 
 	const auto asExternal = displayAsExternal(holder);
-	const auto nonEmptyQuote = !_fields.quote.empty()
+	const auto nonEmptyQuote = !_fields.displayQuote().empty()
 		&& (asExternal || _fields.manualQuote);
 	_multiline = !_fields.storyId && (asExternal || nonEmptyQuote);
 

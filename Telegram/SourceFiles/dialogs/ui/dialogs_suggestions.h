@@ -183,7 +183,6 @@ private:
 	[[nodiscard]] Data::Thread *updateFromChatsDrag(QPoint globalPosition);
 	[[nodiscard]] Data::Thread *updateFromChannelsDrag(
 		QPoint globalPosition);
-	[[nodiscard]] Data::Thread *updateFromAppsDrag(QPoint globalPosition);
 	[[nodiscard]] Data::Thread *fromListId(uint64 peerListRowId);
 
 	[[nodiscard]] std::unique_ptr<ObjectList> setupRecentPeers(

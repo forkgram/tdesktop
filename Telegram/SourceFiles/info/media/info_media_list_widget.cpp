@@ -2503,6 +2503,13 @@ void ListWidget::performDrag() {
 		pressedHandler->property(
 			kDocumentLinkMediaProperty).toULongLong());
 	if (document) {
+		const auto peer = (_controller->isDownloads() && _pressState.item)
+			? _pressState.item->history()->peer.get()
+			: _controller->key().peer();
+		if ((peer && !peer->allowsForwarding())
+			|| (_pressState.item && _pressState.item->forbidsForward())) {
+			return;
+		}
 		const auto filepath = document->filepath(true);
 		if (filepath.isEmpty()) {
 			return;

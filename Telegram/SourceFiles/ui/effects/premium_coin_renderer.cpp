@@ -7,7 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "ui/effects/premium_coin_renderer.h"
 
-#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
+#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0) && !defined DESKTOP_APP_DISABLE_PRIVATE_QT_API
 
 #include "ui/effects/premium_3d_mesh.h"
 #include "base/debug_log.h"
@@ -110,8 +110,9 @@ void CoinRenderer::initialize(
 	const auto align = std::max<quint32>(rhi->ubufAlignment(), 1);
 	const auto slotBytes = quint32(4 * sizeof(float));
 	_drawStride = ((slotBytes + align - 1) / align) * align;
+	// D3D11 accepts uniform buffers only as Dynamic ones.
 	_drawUniform = rhi->newBuffer(
-		QRhiBuffer::Immutable,
+		QRhiBuffer::Dynamic,
 		QRhiBuffer::UniformBuffer,
 		kShellCount * _drawStride);
 	if (!_drawUniform->create()) {
@@ -161,7 +162,11 @@ void CoinRenderer::initialize(
 			_vertexBuffers[i],
 			model.shells[i].vertices.data());
 	}
-	rub->uploadStaticBuffer(_drawUniform, drawData.data());
+	rub->updateDynamicBuffer(
+		_drawUniform,
+		0,
+		quint32(drawData.size() * sizeof(float)),
+		drawData.data());
 	rub->uploadTexture(_borderTexture, border);
 	rub->uploadTexture(_flecksTexture, flecks);
 	cb->resourceUpdate(rub);
@@ -344,4 +349,4 @@ void CoinRenderer::releaseResources() {
 
 } // namespace Ui::Premium
 
-#endif // Qt >= 6.7
+#endif // Qt >= 6.7 && !DESKTOP_APP_DISABLE_PRIVATE_QT_API

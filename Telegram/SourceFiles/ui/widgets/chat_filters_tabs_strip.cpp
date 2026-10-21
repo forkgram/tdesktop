@@ -108,17 +108,6 @@ void ShowMenu(
 			.isAttention = true,
 		});
 	} else {
-		MarkAsReadMenu::AddChatListAction(
-			controller,
-			MarkAsReadMenu::ChatListKind::AllChats,
-			[=] { return session->data().chatsList(); },
-			addAction);
-
-		Window::MenuAddMuteAllChatListAction(
-			controller,
-			[=] { return session->data().chatsList(); },
-			addAction);
-
 		auto openFiltersSettings = [=] {
 			const auto filters = &session->data().chatsFilters();
 			if (filters->suggestedLoaded()) {
@@ -136,6 +125,17 @@ void ShowMenu(
 			tr::lng_filters_setup_menu(tr::now),
 			std::move(openFiltersSettings),
 			&st::menuIconEdit);
+
+		MarkAsReadMenu::AddChatListAction(
+			controller,
+			MarkAsReadMenu::ChatListKind::AllChats,
+			[=] { return session->data().chatsList(); },
+			addAction);
+
+		Window::MenuAddMuteAllChatListAction(
+			controller,
+			[=] { return session->data().chatsList(); },
+			addAction);
 	}
 	if (state->menu->empty()) {
 		state->menu = nullptr;

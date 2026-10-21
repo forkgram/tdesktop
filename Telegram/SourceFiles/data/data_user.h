@@ -21,6 +21,7 @@ namespace Data {
 class Forum;
 struct BotCommand;
 struct BusinessDetails;
+struct WalletCard;
 } // namespace Data
 
 namespace Api {
@@ -297,6 +298,9 @@ public:
 	[[nodiscard]] const std::optional<QString> &gramAddress() const;
 	void setGramAddress(QString address);
 
+	[[nodiscard]] const Data::WalletCard *walletCard() const;
+	void setWalletCard(std::optional<Data::WalletCard> card);
+
 	[[nodiscard]] bool hasActiveStories() const;
 	[[nodiscard]] bool hasUnreadStories() const;
 	[[nodiscard]] bool hasActiveVideoStream() const;
@@ -361,6 +365,7 @@ private:
 	QString _privateForwardName;
 	std::optional<QString> _gramAddress;
 	std::unique_ptr<Ui::BotVerifyDetails> _botVerifyDetails;
+	std::unique_ptr<Data::WalletCard> _walletCard;
 	Data::StarsRating _starsRating;
 
 	ChannelId _personalChannelId = 0;
