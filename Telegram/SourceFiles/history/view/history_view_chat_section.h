@@ -156,6 +156,7 @@ public:
 
 	bool confirmSendingFiles(const QStringList &files) override;
 	bool confirmSendingFiles(not_null<const QMimeData*> data) override;
+	void insertTextAtCursor(const QString &text) override;
 	bool notify_switchInlineBotButtonReceived(
 		const QString &query,
 		UserData *samePeerBot,
@@ -325,6 +326,7 @@ private:
 	void onScroll();
 	void scrollToCurrentVoiceMessage(FullMsgId fromId, FullMsgId toId);
 	void closeCurrent();
+	void topicDestroyed();
 	void sublistDestroyed();
 	void unreadCountUpdated();
 	void updateInnerVisibleArea();
@@ -539,7 +541,7 @@ private:
 	MsgId _repliesKeyboardHiddenId = 0;
 	HistoryItem *_repliesRoot = nullptr;
 	Data::ForumTopic *_topic = nullptr;
-	mutable Data::ForumTopic *_creatingBotTopic = nullptr;
+	mutable base::weak_ptr<Data::ForumTopic> _creatingBotTopic;
 	mutable bool _newTopicDiscarded = false;
 	std::shared_ptr<Data::RepliesList> _replies;
 	rpl::lifetime _repliesLifetime;

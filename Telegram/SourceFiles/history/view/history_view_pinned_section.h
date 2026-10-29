@@ -34,6 +34,7 @@ class TopBarWidget;
 class ComposeSearch;
 class PinnedMemento;
 class TranslateBar;
+struct PinnedThreadLifetime;
 
 class PinnedWidget final
 	: public Window::SectionWidget
@@ -43,7 +44,8 @@ public:
 	PinnedWidget(
 		QWidget *parent,
 		not_null<Window::SessionController*> controller,
-		not_null<Data::Thread*> thread);
+		not_null<Data::Thread*> thread,
+		std::shared_ptr<PinnedThreadLifetime> threadLifetime);
 	~PinnedWidget();
 
 	[[nodiscard]] not_null<Data::Thread*> thread() const;
@@ -176,6 +178,10 @@ private:
 	void setupClearButton();
 	void setupTranslateBar();
 	void setupShortcuts();
+	void setupThreadLifetime(rpl::producer<> destroyed);
+	void adoptThreadLifetime(
+		std::shared_ptr<PinnedThreadLifetime> threadLifetime);
+	void threadDestroyed();
 	void searchInPinned();
 
 	void confirmDeleteSelected();
@@ -189,6 +195,7 @@ private:
 
 	const not_null<Data::Thread*> _thread;
 	const not_null<History*> _history;
+	std::shared_ptr<PinnedThreadLifetime> _threadLifetime;
 	std::shared_ptr<Ui::ChatTheme> _theme;
 	PeerData *_migratedPeer = nullptr;
 	QPointer<ListWidget> _inner;
@@ -215,7 +222,8 @@ public:
 
 	explicit PinnedMemento(
 		not_null<Data::Thread*> thread,
-		UniversalMsgId highlightId = 0);
+		UniversalMsgId highlightId = 0,
+		std::shared_ptr<PinnedThreadLifetime> threadLifetime = nullptr);
 
 	object_ptr<Window::SectionWidget> createWidget(
 		QWidget *parent,
@@ -223,9 +231,8 @@ public:
 		Window::Column column,
 		const QRect &geometry) override;
 
-	[[nodiscard]] not_null<Data::Thread*> getThread() const {
-		return _thread;
-	}
+	[[nodiscard]] bool expired() const;
+	[[nodiscard]] not_null<Data::Thread*> getThread() const;
 
 	[[nodiscard]] not_null<ListMemento*> list() {
 		return &_list;
@@ -239,6 +246,7 @@ public:
 
 private:
 	const not_null<Data::Thread*> _thread;
+	const std::shared_ptr<PinnedThreadLifetime> _threadLifetime;
 	const UniversalMsgId _highlightId = 0;
 	ListMemento _list;
 

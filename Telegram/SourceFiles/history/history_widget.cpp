@@ -53,6 +53,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/labels.h"
 #include "ui/effects/ripple_animation.h"
 #include "ui/effects/message_sending_animation_controller.h"
+#include "ui/effects/message_sending_text_flight.h"
 #include "ui/text/format_values.h"
 #include "ui/text/text_utilities.h"
 #include "ui/chat/message_bar.h"
@@ -123,6 +124,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/controls/history_view_characters_limit.h"
 #include "history/view/controls/history_view_compose_ai_button.h"
 #include "history/view/controls/history_view_compose_ai_tooltip.h"
+#include "history/view/controls/history_view_bot_menu_hold.h"
 #include "history/view/controls/history_view_compose_search.h"
 #include "history/view/controls/history_view_forward_panel.h"
 #include "history/view/controls/history_view_draft_options.h"
@@ -1194,15 +1196,16 @@ HistoryWidget::HistoryWidget(
 
 	session().api().sendActions(
 	) | rpl::filter([=](const Api::SendAction &action) {
-		if (_creatingBotTopic
-			&& action.history == _creatingBotTopic->owningHistory()
-			&& action.replyTo.topicRootId == _creatingBotTopic->rootId()) {
+		const auto creating = _creatingBotTopic.get();
+		if (creating
+			&& action.history == creating->owningHistory()
+			&& action.replyTo.topicRootId == creating->rootId()) {
 			// Guard 'this' (the call reads _creatingBotTopic) and re-check
 			// the topic: it may be gone or already handled by another call.
-			const auto weak = base::make_weak(_creatingBotTopic);
+			const auto weak = _creatingBotTopic;
 			Ui::PostponeCall(this, [=] {
 				using namespace HistoryView;
-				const auto topic = base::take(_creatingBotTopic);
+				const auto topic = base::take(_creatingBotTopic).get();
 				if (!topic || topic != weak.get()) {
 					return;
 				}
@@ -1492,7 +1495,7 @@ void HistoryWidget::initVoiceRecordBar() {
 		if (_stash) {
 			_stash->updateButton();
 		}
-	}, lifetime());
+	}, _recordingStateLifetime);
 
 	_voiceRecordBar->hideFast();
 }
@@ -2744,12 +2747,12 @@ bool HistoryWidget::notify_switchInlineBotButtonReceived(
 		return true;
 	} else if (const auto bot = _peer ? _peer->asUser() : nullptr) {
 		const auto to = bot->isBot()
-			? bot->botInfo->inlineReturnTo
+			? bot->botInfo->inlineReturnTo()
 			: Dialogs::EntryState();
 		if (!to.key.owningHistory()) {
 			return false;
 		}
-		bot->botInfo->inlineReturnTo = Dialogs::EntryState();
+		bot->botInfo->setInlineReturnTo(Dialogs::EntryState());
 		controller()->switchInlineQuery(to, bot, query);
 		return true;
 	}
@@ -2809,11 +2812,15 @@ void HistoryWidget::setupShortcuts() {
 				return true;
 			});
 		_preview
-			&& (_previewDrawPreview || _preview->draft().removed)
+			&& (_previewDrawPreview
+				|| _preview->draft().removed
+				|| _preview->disabled())
 			&& request->check(Command::ToggleWebPagePreview, 1)
 			&& request->handle([=] {
 				if (_previewDrawPreview) {
 					_preview->apply({ .removed = true });
+				} else if (_preview->disabled()) {
+					_preview->setDisabled(false);
 				} else {
 					_preview->apply({}, true);
 				}
@@ -3385,7 +3392,7 @@ void HistoryWidget::showHistory(
 				if (const auto &info = user->botInfo) {
 					if (startBot || clearMaybeSendStart()) {
 						if (startBot && wasState.key) {
-							info->inlineReturnTo = wasState;
+							info->setInlineReturnTo(wasState);
 						}
 						sendBotStartCommand();
 						_history->clearLocalDraft(MsgId(), PeerId());
@@ -3661,7 +3668,7 @@ void HistoryWidget::showHistory(
 				if (startBot
 					|| (!_history->isEmpty() && clearMaybeSendStart())) {
 					if (startBot && wasState.key) {
-						info->inlineReturnTo = wasState;
+						info->setInlineReturnTo(wasState);
 					}
 					sendBotStartCommand();
 				}
@@ -3778,9 +3785,11 @@ void HistoryWidget::setHistory(History *history) {
 		const auto wasMigrated = base::take(_migrated);
 		unloadHeavyViewParts(wasHistory);
 		unloadHeavyViewParts(wasMigrated);
-		if (const auto wasCreatingBotTopic = base::take(_creatingBotTopic)) {
-			wasCreatingBotTopic->forum()->discardCreatingId(
-				wasCreatingBotTopic->rootId());
+		if (const auto wasCreatingBotTopic = base::take(_creatingBotTopic).get()) {
+			if (wasCreatingBotTopic->creating()) {
+				wasCreatingBotTopic->forum()->discardCreatingId(
+					wasCreatingBotTopic->rootId());
+			}
 		}
 	}
 	if (history) {
@@ -5838,18 +5847,22 @@ Api::SendAction HistoryWidget::prepareSendAction(
 			if (readyRootId) {
 				result.replyTo.topicRootId = readyRootId;
 			} else {
-				if (!_creatingBotTopic) {
-					_creatingBotTopic = forum->reserveNewBotTopic();
+				const auto existing = _creatingBotTopic.get();
+				const auto topic = existing
+					? existing
+					: forum->reserveNewBotTopic();
+				const auto rootId = topic->rootId();
+				if (!existing) {
+					_creatingBotTopic = topic;
 					auto draft = _history->forwardDraft(MsgId(0), PeerId());
 					if (!draft.ids.empty()) {
 						_history->setForwardDraft(MsgId(0), PeerId(), {});
 						_history->setForwardDraft(
-							_creatingBotTopic->rootId(),
+							rootId,
 							PeerId(),
 							std::move(draft));
 					}
 				}
-				const auto rootId = _creatingBotTopic->rootId();
 				if (!result.replyTo.messageId) {
 					result.replyTo.messageId = FullMsgId(
 						_history->peer->id,
@@ -6094,6 +6107,9 @@ void HistoryWidget::sendTextWithTags(
 			.type = Ui::MessageSendingAnimationFrom::Type::Text,
 			.localId = nextLocalMessageId,
 			.globalStartGeometry = _field->mapToGlobal(Rect(_field->size())),
+			.fieldText = (options.scheduled
+				? std::nullopt
+				: Ui::GrabSendingFieldText(_field, textWithTags)),
 		});
 	}
 
@@ -7105,6 +7121,20 @@ bool HistoryWidget::updateCmdStartShown() {
 			},
 			[=] { updateFieldSize(); },
 			session().data().customEmojiManager().factory());
+		{
+			using namespace HistoryView::Controls;
+			_botMenu->lifetime().make_state<BotMenuHoldTracker>(
+				_botMenu.get(),
+				kBotMenuHoldDuration,
+				[=] {
+					if (!_autocomplete) {
+						return;
+					} else if (_autocomplete->isHidden()) {
+						_autocomplete->showFiltered(_peer, u"/"_q, true);
+					}
+					_autocomplete->startPressDragSelect();
+				});
+		}
 		_botMenuPeer = bot->id;
 		orderWidgets();
 	}
@@ -8855,6 +8885,7 @@ void HistoryWidget::revealItemsCallback() {
 			: _list->historyScrollTop();
 		const auto toY = std::clamp(newScrollTop, 0, _scroll->scrollTopMax());
 		synteticScrollToY(toY);
+		_itemsRevealHeightChanges.fire({});
 	}
 }
 
@@ -8863,7 +8894,7 @@ void HistoryWidget::startItemRevealAnimations() {
 		if (const auto view = item->mainView()) {
 			if (const auto top = _list->itemTop(view); top >= 0) {
 				if (const auto height = view->height()) {
-					startMessageSendingAnimation(item);
+					const auto reveal = startMessageSendingAnimation(item);
 					if (!_itemRevealAnimations.contains(item)) {
 						auto &animation = _itemRevealAnimations[item];
 						animation.startHeight = height;
@@ -8872,8 +8903,8 @@ void HistoryWidget::startItemRevealAnimations() {
 							[=] { revealItemsCallback(); },
 							0.,
 							1.,
-							st::itemRevealDuration,
-							anim::easeOutCirc);
+							reveal ? reveal->duration : st::itemRevealDuration,
+							reveal ? reveal->transition : anim::easeOutCirc);
 						if (item->out() || _history->peer->isSelf()) {
 							_list->theme()->rotateComplexGradientBackground();
 						}
@@ -8884,39 +8915,42 @@ void HistoryWidget::startItemRevealAnimations() {
 	}
 }
 
-void HistoryWidget::startMessageSendingAnimation(
-		not_null<HistoryItem*> item) {
+auto HistoryWidget::startMessageSendingAnimation(
+		not_null<HistoryItem*> item)
+-> std::optional<Ui::MessageSendingReveal> {
 	if (_list->elementChatMode() == HistoryView::ElementChatMode::Default
 		&& width() > st::columnMaximalWidthLeft
 		&& !item->media()) {
-		return;
+		controller()->sendingAnimation().dropPendingSnapshot(item);
+		return std::nullopt;
 	}
 	auto &sendingAnimation = controller()->sendingAnimation();
 	if (!sendingAnimation.checkExpectedType(item)) {
-		return;
+		return std::nullopt;
 	}
 	Assert(item->mainView() != nullptr);
 
-	auto globalEndTopLeft = rpl::merge(
+	auto changes = rpl::merge(
 		_scroll->innerResizes() | rpl::to_empty,
 		session().data().newItemAdded() | rpl::to_empty,
 		geometryValue() | rpl::to_empty,
 		_scroll->geometryValue() | rpl::to_empty,
-		_list->geometryValue() | rpl::to_empty
-	) | rpl::map([=]() -> std::optional<QPoint> {
+		_list->geometryValue() | rpl::to_empty);
+	const auto globalTopLeft = [=](bool live) -> std::optional<QPoint> {
 		const auto view = item->mainView();
 		const auto top = view ? _list->itemTop(view) : -1;
 		if (top < 0) {
 			return std::nullopt;
 		}
-		const auto additional = (_list->height() == _scroll->height())
-			? view->height()
-			: 0;
+		const auto shortList = (_list->height() == _scroll->height());
+		const auto additional = (!live && shortList) ? view->height() : 0;
 		return _list->mapToGlobal(QPoint(0, top - additional));
-	});
+	};
 
-	sendingAnimation.startAnimation({
-		.globalEndTopLeft = std::move(globalEndTopLeft),
+	return sendingAnimation.startAnimation({
+		.globalTopLeft = globalTopLeft,
+		.changes = std::move(changes),
+		.revealChanges = _itemsRevealHeightChanges.events(),
 		.view = [=] { return item->mainView(); },
 		.paintContext = [=] { return _list->preparePaintContext({}); },
 	});

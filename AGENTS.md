@@ -311,6 +311,14 @@ user to close that checkout's Telegram/debugger before rebuilding.
 1. **Always use Debug builds** - Release builds are extremely heavy
 2. **Don't build Release configuration** - it's too heavy for testing
 
+## Remote CI Build Validation (private-ci)
+
+Fast Debug build checks on Depot.dev (`.github/workflows/private-ci.yml`) run on
+`private-ci/<slug>` branches. Strictly on-demand: never push or babysit CI unless
+the user explicitly asks. Track with `gh run watch`, inspect with
+`gh run view --log-failed`. Amend your commit on your own build error; make a
+separate commit if broken by upstream. Delete the remote branch when green.
+
 ## Debug-Only Code
 
 Production translation units stay free of debug machinery. The permanent test
@@ -329,6 +337,17 @@ publication at a construction seam).
 - Exceptions exist — a few `#ifdef _DEBUG` hooks are deliberately kept in
   production files — but they are exceptions and each new one needs a solid,
   stated reason. "The test needed it" is not one.
+
+## Harness documentation
+
+Keep `Telegram/SourceFiles/test/README.md` a short mandatory guide, under
+8 KiB. When adding or changing a harness helper, follow
+`Telegram/SourceFiles/test/docs/adding-helpers.md`: add or update one helper
+index row and its on-demand reference, and keep the source header focused on
+its callable contract. Detailed examples, platform caveats and diagnostic
+history belong in the references, not in the mandatory README. Overlay work
+reads that guide, the references selected by the task and their headers;
+never require reading every helper page.
 
 ## Text File Format
 

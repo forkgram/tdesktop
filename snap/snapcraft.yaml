@@ -124,7 +124,7 @@ parts:
   patches:
     source: https://github.com/desktop-app/patches.git
     source-depth: 1
-    source-commit: a895fef40eaa7d66481cff542c623b039b7ce494
+    source-commit: 8b1791a08893e84bc94b3d4ae274747d25852dab
     plugin: nil
     override-pull: |
       craftctl default
@@ -528,7 +528,7 @@ parts:
   webrtc:
     source: https://github.com/desktop-app/tg_owt.git
     source-depth: 1
-    source-commit: 07fb35bc33b3e79125a1beab7690e830f183f5d8
+    source-commit: ec71c06aaaed1cfda8669d51cf3b8d5b447b2031
     plugin: cmake
     build-packages:
       - libopenh264-dev

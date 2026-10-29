@@ -55,6 +55,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/text/format_values.h"
 #include "ui/text/text_utilities.h"
 #include "ui/effects/message_sending_animation_controller.h"
+#include "ui/effects/message_sending_text_flight.h"
 #include "ui/painter.h"
 #include "ui/rect.h"
 #include "ui/screen_reader_mode.h"
@@ -693,6 +694,9 @@ ChatWidget::ChatWidget(
 	) | rpl::on_next([=](const Data::MessageUpdate &update) {
 		if (update.item == _repliesRoot) {
 			_repliesRoot = nullptr;
+			if (_topControls) {
+				_topControls->repliesRootDestroyed();
+			}
 			updatePinnedVisibility();
 			if (!_topic) {
 				controller->showBackFromStack();
@@ -722,15 +726,16 @@ ChatWidget::ChatWidget(
 
 	session().api().sendActions(
 	) | rpl::filter([=](const Api::SendAction &action) {
-		if (_creatingBotTopic
-			&& action.history == _creatingBotTopic->owningHistory()
-			&& action.replyTo.topicRootId == _creatingBotTopic->rootId()) {
+		const auto creating = _creatingBotTopic.get();
+		if (creating
+			&& action.history == creating->owningHistory()
+			&& action.replyTo.topicRootId == creating->rootId()) {
 			// Guard 'this' (the call reads _creatingBotTopic) and re-check
 			// the topic: it may be gone or already handled by another call.
-			const auto weak = base::make_weak(_creatingBotTopic);
+			const auto weak = _creatingBotTopic;
 			Ui::PostponeCall(this, [=] {
 				using namespace HistoryView;
-				const auto topic = base::take(_creatingBotTopic);
+				const auto topic = base::take(_creatingBotTopic).get();
 				if (!topic || topic != weak.get()) {
 					return;
 				}
@@ -1079,7 +1084,7 @@ ChatWidget::~ChatWidget() {
 		_inner->saveState(&state);
 		saveHistoryScrollState(state);
 	}
-	if (const auto reserved = base::take(_creatingBotTopic)) {
+	if (const auto reserved = base::take(_creatingBotTopic).get()) {
 		if (reserved->creating()) {
 			reserved->discard();
 		}
@@ -1266,7 +1271,7 @@ void ChatWidget::subscribeToTopic() {
 
 	_topic->destroyed(
 	) | rpl::on_next([=] {
-		closeCurrent();
+		topicDestroyed();
 	}, _topicLifetime);
 
 	if (!_topic->creating()) {
@@ -1289,6 +1294,32 @@ void ChatWidget::closeCurrent() {
 			anim::type::normal,
 			anim::activation::background));
 	}
+}
+
+void ChatWidget::topicDestroyed() {
+	const auto id = controller()->windowId();
+	if (id.chat() == _topic) {
+		closeCurrent();
+		return;
+	} else if (!id.hasChatsList()) {
+		// Show the owning group here before the topic is freed.
+		showHistoryAfterThreadDestroyed(_history);
+		return;
+	}
+	const auto showing = Core::App().windowForShowingHistory(_peer);
+	if (_history->peer->useSubsectionTabs()
+		&& (!showing || showing == &controller()->window())
+		&& controller()->activeChatCurrent().thread() == _topic) {
+		auto params = Window::SectionShow(
+			Window::SectionShow::Way::ClearStack,
+			anim::type::instant,
+			anim::activation::background);
+		params.preferCurrentWindow = true;
+
+		controller()->showThread(_history, ShowAtUnreadMsgId, params);
+		return;
+	}
+	closeCurrent();
 }
 
 void ChatWidget::sublistDestroyed() {
@@ -2309,18 +2340,22 @@ Api::SendAction ChatWidget::prepareSendAction(
 				if (readyRootId) {
 					result.replyTo.topicRootId = readyRootId;
 				} else {
-					if (!_creatingBotTopic) {
-						_creatingBotTopic = forum->reserveNewBotTopic();
+					const auto existing = _creatingBotTopic.get();
+					const auto topic = existing
+						? existing
+						: forum->reserveNewBotTopic();
+					const auto rootId = topic->rootId();
+					if (!existing) {
+						_creatingBotTopic = topic;
 						auto draft = _history->forwardDraft(MsgId(0), PeerId());
 						if (!draft.ids.empty()) {
 							_history->setForwardDraft(MsgId(0), PeerId(), {});
 							_history->setForwardDraft(
-								_creatingBotTopic->rootId(),
+								rootId,
 								PeerId(),
 								std::move(draft));
 						}
 					}
-					const auto rootId = _creatingBotTopic->rootId();
 					if (!result.replyTo.messageId) {
 						result.replyTo.messageId = FullMsgId(
 							_history->peer->id,
@@ -2634,6 +2669,9 @@ void ChatWidget::sendTextWithTags(
 			.localId = nextLocalMessageId,
 			.globalStartGeometry = field->mapToGlobal(
 				Rect(field->size())),
+			.fieldText = (options.scheduled
+				? std::nullopt
+				: Ui::GrabSendingFieldText(field, textWithTags)),
 		});
 	}
 
@@ -4039,12 +4077,12 @@ bool ChatWidget::notify_switchInlineBotButtonReceived(
 		return true;
 	} else if (const auto bot = _peer->asUser()) {
 		const auto to = bot->isBot()
-			? bot->botInfo->inlineReturnTo
+			? bot->botInfo->inlineReturnTo()
 			: Dialogs::EntryState();
 		if (!to.key.owningHistory()) {
 			return false;
 		}
-		bot->botInfo->inlineReturnTo = Dialogs::EntryState();
+		bot->botInfo->setInlineReturnTo(Dialogs::EntryState());
 		controller()->switchInlineQuery(to, bot, query);
 		return true;
 	}
@@ -4084,6 +4122,12 @@ bool ChatWidget::confirmSendingFiles(const QStringList &files) {
 
 bool ChatWidget::confirmSendingFiles(not_null<const QMimeData*> data) {
 	return confirmSendingFiles(data, std::nullopt);
+}
+
+void ChatWidget::insertTextAtCursor(const QString &text) {
+	if (const auto field = _composeControls->fieldForMention()) {
+		Menu::InsertTextAtCursor(field, text);
+	}
 }
 
 bool ChatWidget::confirmSendingFiles(
@@ -4462,7 +4506,15 @@ void ChatWidget::updateControlsGeometry() {
 		if (wasAtBottom) {
 			_scroll->scrollToY(_scroll->scrollTopMax());
 		} else if (newScrollDelta && _scroll->scrollTop()) {
-			_scroll->scrollToY(_scroll->scrollTop() + *newScrollDelta);
+			const auto requested = _scroll->scrollTop() + *newScrollDelta;
+			const auto target = _scroll->computeScrollToY(requested);
+			const auto now = _scroll->scrollTop();
+			// Past an edge ElasticScroll may not apply the computed target.
+			if (now >= 0 && now <= _scroll->scrollTopMax()) {
+				// Scrolling can re-enter layout and re-pin the collapse.
+				_inner->shiftScrollBaseline(target - now);
+			}
+			_scroll->scrollToY(requested);
 		}
 		updateInnerVisibleArea();
 	}

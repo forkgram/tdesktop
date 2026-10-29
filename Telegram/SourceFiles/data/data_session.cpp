@@ -122,7 +122,7 @@ void CheckForSwitchInlineButton(not_null<HistoryItem*> item) {
 		return;
 	}
 	if (const auto user = item->history()->peer->asUser()) {
-		if (!user->isBot() || !user->botInfo->inlineReturnTo.key) {
+		if (!user->isBot() || !user->botInfo->inlineReturnTo().key) {
 			return;
 		}
 		if (const auto markup = item->Get<HistoryMessageReplyMarkup>()) {
@@ -558,6 +558,9 @@ void Session::clear() {
 	_contactsList.clear();
 	for (const auto &[id, folder] : _folders) {
 		folder->clearChatsList();
+
+		// Folders outlive clear(), don't leave them with dangling rows.
+		removeChatListEntry(folder.get());
 	}
 	_chatsList.clear();
 	_chatsFilters->clear();
@@ -3904,7 +3907,9 @@ void Session::photoApplyFields(
 			sizes,
 			std::greater<>(),
 			level);
-		return (level(*result) == kInvalidIndex) ? sizes.end() : result;
+		return (result == sizes.end() || level(*result) == kInvalidIndex)
+			? sizes.end()
+			: result;
 	};
 	const auto image = [&](const QByteArray &levels) {
 		const auto i = find(levels);
@@ -3920,7 +3925,9 @@ void Session::photoApplyFields(
 		}
 		const auto area = [](const MTPVideoSize &size) {
 			return size.match([](const MTPDvideoSize &data) {
-				return data.vsize().v ? (data.vw().v * data.vh().v) : 0;
+				return (data.vsize().v > 0)
+					? (data.vw().v * data.vh().v)
+					: 0;
 			}, [](const MTPDvideoSizeEmojiMarkup &) {
 				return 0;
 			}, [](const MTPDvideoSizeStickerMarkup &) {
@@ -4915,15 +4922,9 @@ not_null<PollData*> Session::processPoll(const MTPDmessageMediaPoll &data) {
 				media.document = processDocument(*document);
 			}
 		}, [&](const MTPDmessageMediaGeo &data) {
-			data.vgeo().match([&](const MTPDgeoPoint &point) {
-				media.geo = LocationPoint(point);
-			}, [](const MTPDgeoPointEmpty &) {
-			});
+			media.geo = LocationPoint::FromMTP(data.vgeo());
 		}, [&](const MTPDmessageMediaVenue &data) {
-			data.vgeo().match([&](const MTPDgeoPoint &point) {
-				media.geo = LocationPoint(point);
-			}, [](const MTPDgeoPointEmpty &) {
-			});
+			media.geo = LocationPoint::FromMTP(data.vgeo());
 		}, [](const auto &) {
 		});
 	}

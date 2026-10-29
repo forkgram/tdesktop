@@ -861,8 +861,8 @@ void ReplyArea::show(
 	invalidate_weak_ptrs(&_shownPeerGuard);
 	const auto peer = data.peer;
 	const auto history = peer ? peer->owner().history(peer).get() : nullptr;
-	const auto user = peer->asUser();
-	_type = peer->isMegagroup()
+	const auto user = peer ? peer->asUser() : nullptr;
+	_type = (peer && peer->isMegagroup())
 		? ReplyAreaType::Comment
 		: ReplyAreaType::Reply;
 	auto writeRestriction = stream
@@ -880,6 +880,8 @@ void ReplyArea::show(
 					.type = WriteRestrictionType::Rights,
 				};
 		}) | rpl::type_erased
+		: !peer
+		? rpl::producer<HistoryView::Controls::WriteRestriction>()
 		: Data::CanSendAnythingValue(
 			peer
 		) | rpl::map([=](bool can) {
@@ -912,8 +914,12 @@ void ReplyArea::show(
 				Fn<void(int)> done) {
 			return checkSendPayment(count, options, std::move(done));
 		},
-		.slowmodeSecondsLeft = SlowmodeSecondsLeft(history->peer),
-		.sendDisabledBySlowmode = SendDisabledBySlowmode(history->peer),
+		.slowmodeSecondsLeft = (history
+			? SlowmodeSecondsLeft(history->peer)
+			: rpl::producer<int>()),
+		.sendDisabledBySlowmode = (history
+			? SendDisabledBySlowmode(history->peer)
+			: rpl::producer<bool>()),
 		.liked = std::move(
 			likedValue
 		) | rpl::map([](const Data::ReactionId &id) {
@@ -930,6 +936,7 @@ void ReplyArea::show(
 		&& !stream;
 	const auto cant = !peer;
 	if (!hidden && !cant) {
+		_cant = nullptr;
 		_controls->show();
 	} else {
 		_controls->hide();

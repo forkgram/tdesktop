@@ -2317,6 +2317,11 @@ void PeerMenuDeleteTopicWithConfirmation(
 	};
 	const auto controller = navigation->parentController();
 	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		topic->destroyed(
+		) | rpl::on_next([=] {
+			box->closeBox();
+		}, box->lifetime());
+
 		Ui::AddSkip(box->verticalLayout());
 		Ui::IconWithTitle(
 			box->verticalLayout(),
@@ -2728,7 +2733,11 @@ void PeerMenuEditTodoList(
 			result.options,
 			crl::guard(weak, [=] { weak->closeBox(); }),
 			crl::guard(weak, [=](const QString &error) {
-				weak->submitFailed(error);
+				if (error == u"MESSAGE_NOT_MODIFIED"_q) {
+					weak->closeBox();
+				} else {
+					weak->submitFailed(error);
+				}
 			}));
 	}, box->lifetime());
 	controller->show(std::move(box), Ui::LayerOption::CloseOther);

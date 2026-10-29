@@ -247,6 +247,10 @@ Data::WebPageDraft WebpageProcessor::draft() const {
 	return _draft;
 }
 
+bool WebpageProcessor::disabled() const {
+	return _parser.disabled();
+}
+
 WebPageData *WebpageProcessor::data() const {
 	return _data;
 }
