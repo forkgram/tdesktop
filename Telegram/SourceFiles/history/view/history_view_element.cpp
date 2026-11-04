@@ -2094,12 +2094,16 @@ auto Element::contextDependentServiceText() -> TextWithLinks {
 
 void Element::validateText() {
 	const auto clearRichPage = [&] {
-		if (Has<HistoryMessageRichPage>()) {
+		if (const auto rich = richpage()) {
+			const auto heavy = rich->article.hasHeavyPart();
 			ClickHandler::clearActive(this);
 			RemoveComponents(0
 				| HistoryMessageRichPage::Bit()
 				| InstantViewMediaRuntime::Bit());
 			invalidateTextSizeCache();
+			if (heavy) {
+				checkHeavyPart();
+			}
 		}
 	};
 	const auto ensureRichPage = [&](
@@ -2160,6 +2164,7 @@ void Element::validateText() {
 		if (runtime->page == page && runtime->mediaRuntime) {
 			return;
 		}
+		const auto heavy = runtime->article.hasHeavyPart();
 		const auto &layoutSt = st::messageMarkdown;
 		const auto session = &history()->session();
 		const auto richLimits = Iv::ResolveRichMessageLimits(session);
@@ -2203,6 +2208,8 @@ void Element::validateText() {
 		runtime->handlerMediaActivation = {};
 		runtime->handlerPlaceholderId = {};
 		runtime->handlerPlaceholderPoint = QPoint();
+		runtime->pressedPlaceholderId = {};
+		runtime->pressedPlaceholderHandler = nullptr;
 		runtime->handlerButtonRow = {};
 		runtime->handlerButtonRowHandler = nullptr;
 		runtime->pressedButtonRow = {};
@@ -2211,6 +2218,9 @@ void Element::validateText() {
 		runtime->handlerInlineButtonHandler = nullptr;
 		runtime->pressedInlineButtonHandler = nullptr;
 		invalidateTextSizeCache();
+		if (heavy) {
+			checkHeavyPart();
+		}
 	};
 	const auto item = data();
 	const auto media = item->media();
@@ -3602,9 +3612,6 @@ auto Element::takeReactionAnimations()
 		return _reactions->takeAnimations();
 	}
 	return {};
-}
-
-void Element::animateUnreadEffect() {
 }
 
 auto Element::takeEffectAnimation()

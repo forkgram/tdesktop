@@ -52,6 +52,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_folder.h"
 #include "data/data_channel.h"
 #include "data/data_chat.h"
+#include "data/data_chat_participant_status.h"
 #include "data/data_user.h"
 #include "data/data_document.h"
 #include "data/data_document_media.h"
@@ -63,6 +64,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_forum_topic.h"
 #include "data/data_chat_filters.h"
 #include "data/data_replies_list.h"
+#include "data/data_report.h"
 #include "data/data_peer_values.h"
 #include "data/data_premium_limits.h"
 #include "data/data_web_page.h"
@@ -639,7 +641,7 @@ void SessionNavigation::showMessageByLinkResolved(
 	params.highlight.pollOption = info.pollOption;
 	const auto peer = item->history()->peer;
 	const auto topicId = peer->isForum() ? item->topicRootId() : 0;
-	if (topicId) {
+	if (topicId && !(peer->isBot() && peer->forum()->topicDeleted(topicId))) {
 		const auto messageId = (item->id == topicId) ? MsgId() : item->id;
 		showRepliesForMessage(item->history(), topicId, messageId, params);
 	} else {
@@ -713,17 +715,26 @@ void SessionNavigation::showPeerByLinkResolved(
 				Data::PeerUpdate::Flag::BotStartToken);
 		}
 	};
+	const auto botForumPost = bot
+		&& bot->isForum()
+		&& (info.resolveType == ResolveType::Default)
+		&& IsServerMsgId(info.messageId)
+		&& !info.attachBotToggleCommand;
+	const auto botLinkAction = bot
+		&& !botForumPost
+		&& (info.attachBotToggleCommand || !info.text.isEmpty());
 
 	// t.me/username/012345 - we thought it was a channel post link, but
 	// after resolving the username we found out it is a bot.
 	const auto resolveType = (bot
+		&& !botForumPost
 		&& !info.botAppName.isEmpty()
 		&& info.resolveType == ResolveType::Default)
 		? ResolveType::BotApp
 		: info.resolveType;
 
-	// Show specific posts only in channels / supergroups.
-	const auto useRequestedMessageId = peer->isChannel();
+	// Show specific posts only in channels / supergroups / bot forums.
+	const auto useRequestedMessageId = peer->isChannel() || botForumPost;
 	const auto msgId = useRequestedMessageId
 		? info.messageId
 		: info.startAutoSubmit
@@ -832,7 +843,7 @@ void SessionNavigation::showPeerByLinkResolved(
 			info.startAdminRights);
 	} else if (resolveType == ResolveType::Boost && peer->isChannel()) {
 		resolveBoostState(peer->asChannel());
-	} else if (peer->isForum()) {
+	} else if (peer->isForum() && !botLinkAction) {
 		if (!msgId || !useRequestedMessageId) {
 			applyBotStartToken();
 			parentController()->showForum(peer->forum(), params, msgId);
@@ -842,6 +853,9 @@ void SessionNavigation::showPeerByLinkResolved(
 			const auto callback = crl::guard(this, [=] {
 				if (const auto item = peer->owner().message(peer, msgId)) {
 					showMessageByLinkResolved(item, info);
+				} else if (bot) {
+					const auto history = peer->owner().history(peer);
+					showRepliesForMessage(history, msgId, MsgId(), params);
 				} else {
 					showPeerHistory(peer, params, msgId);
 				}
@@ -1346,9 +1360,13 @@ void SessionNavigation::showRepliesForMessage(
 			return;
 		}
 	}
+	const auto bot = history->peer->asBot();
 	if (_showingRepliesRequestId
 		&& _showingRepliesHistory == history.get()
 		&& _showingRepliesRootId == rootId) {
+		return;
+	} else if (bot && bot->isForum() && IsServerMsgId(rootId)) {
+		loadAndShowBotTopic(history, rootId, commentId, params);
 		return;
 	} else if (!history->peer->asChannel()) {
 		// HistoryView::ChatWidget replies right now handles only channels.
@@ -2308,7 +2326,14 @@ bool SessionController::showForumInDifferentWindow(
 	if (windowId().forum() == forum) {
 		return false;
 	}
-	const auto window = Core::App().windowForShowingForum(forum);
+	const auto found = Core::App().windowForShowingForum(forum);
+
+	// A separate chat window has no chats list to show the topics in.
+	const auto window = (found
+		&& params.forceTopicsList
+		&& !found->id().hasChatsList())
+		? nullptr
+		: found;
 	if (window == _window) {
 		return false;
 	} else if (window) {

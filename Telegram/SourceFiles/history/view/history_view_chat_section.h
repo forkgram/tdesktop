@@ -202,6 +202,7 @@ public:
 		not_null<HistoryItem*> first,
 		not_null<HistoryItem*> second) override;
 	void listSelectionChanged(SelectedItems &&items) override;
+	void listTextSelectionUpdated() override;
 	void listMarkReadTill(not_null<HistoryItem*> item) override;
 	void listItemsAddedToEnd(
 		const std::vector<not_null<Element*>> &items,
@@ -347,6 +348,8 @@ private:
 		FullMsgId originItemId,
 		const Window::SectionShow &params);
 	void finishSending(const Api::SendOptions &options);
+	void setupSendingLanding();
+	[[nodiscard]] bool showsSendingItem(not_null<HistoryItem*> item) const;
 
 	void setupComposeControls();
 	void setupSwipeReplyAndBack();
@@ -405,6 +408,8 @@ private:
 	[[nodiscard]] MsgId resolveTopicRootId(const FullReplyTo &replyTo) const;
 	[[nodiscard]] MsgId resolvedTopicRootId() const;
 	[[nodiscard]] Data::ForumTopic *resolvedTopic();
+	[[nodiscard]] bool monoforumReplyMissing() const;
+	[[nodiscard]] bool monoforumReplyRequired() const;
 	void refreshCanSendMessages();
 	void refreshResolvedTopicRootState();
 	void setKeyboardReplyTo(HistoryItem *item);

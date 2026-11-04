@@ -177,6 +177,43 @@ inbox_receipt: receipts/2026/01/10/test.md
 	return directory
 
 
+def write_retired_task(root, task_id):
+	directory = root / "tasks" / task_id
+	directory.mkdir(parents=True)
+	(directory / "task.md").write_text(
+		"# Retired task\n\n## Retired\n\nThe owner dropped it.\n",
+		encoding="utf-8",
+	)
+	return directory
+
+
+def write_split_source(root, task_id, targets):
+	directory = root / "tasks" / task_id
+	directory.mkdir(parents=True)
+	(directory / "task.md").write_text("# Split source\n", encoding="utf-8")
+	receipt = "receipts/2026/07/20/split.md"
+	(root / receipt).parent.mkdir(parents=True, exist_ok=True)
+	(root / receipt).write_text("# Split\n", encoding="utf-8")
+	git(root, "add", "-A")
+	git(root, "commit", "-q", "-m", "Retain the split source")
+	(directory / "split.yaml").write_text(
+		f"""split_into: [{", ".join(targets)}]
+implementation_carrier: null
+receipt: {receipt}
+type: implement
+created: 2026-07-18
+project: null
+depends_on: []
+model: claude-opus-5
+content_sha256: {workspace.retained_task_digest(directory)}
+""",
+		encoding="utf-8",
+	)
+	git(root, "add", "-A")
+	git(root, "commit", "-q", "-m", "Split the source")
+	return directory
+
+
 def git(repo, *args):
 	return subprocess.run(
 		["git", "-C", str(repo), *args],
@@ -830,6 +867,77 @@ content_sha256: {content_digest}
 		with self.assertRaisesRegex(workspace.WorkspaceError, "dependency cycle"):
 			workspace.validate_dependency_graph({TASK_ID: first, other_id: other})
 
+	def test_a_retired_dependency_counts_as_met(self):
+		retired_id = "2026/07/18/retired-task"
+		task = {**task_state("todo", None), "depends_on": [retired_id]}
+		states = {TASK_ID: task}
+
+		self.assertFalse(workspace.task_ready(task, states))
+		self.assertTrue(workspace.task_ready(task, states, {retired_id}))
+		workspace.validate_dependency_graph(states, {retired_id})
+		with self.assertRaisesRegex(workspace.WorkspaceError, "missing dependencies"):
+			workspace.validate_dependency_graph(states)
+
+	def test_a_split_may_name_a_retired_successor(self):
+		with tempfile.TemporaryDirectory() as temporary:
+			root = Path(temporary)
+			git_repo(root)
+			git(root, "symbolic-ref", "HEAD", "refs/heads/master")
+			write_task(root, status="todo", claimed_by=None)
+			retired_id = "2026/07/20/retired-successor"
+			write_retired_task(root, retired_id)
+			source_id = "2026/07/18/split-source"
+			write_split_source(root, source_id, [TASK_ID, retired_id])
+			states = workspace.load_states(root)
+			superseded = workspace.load_superseded(root)
+			splits = workspace.load_splits(root)
+
+			self.assertEqual(
+				workspace.load_retired(root),
+				{retired_id},
+			)
+			self.assertEqual(
+				workspace.resolve_split_targets(
+					states,
+					superseded,
+					splits,
+					source_id,
+					retired={retired_id},
+				),
+				[TASK_ID],
+			)
+			workspace.validate_queue_graph(root)
+
+	def test_a_graph_problem_on_master_blocks_only_its_own_records(self):
+		with tempfile.TemporaryDirectory() as temporary:
+			root = Path(temporary)
+			git_repo(root)
+			git(root, "symbolic-ref", "HEAD", "refs/heads/master")
+			write_task(root, status="todo", claimed_by=None)
+			broken_id = "2026/07/20/broken-dependency"
+			broken = write_project_task(root, broken_id, "null", "todo", "2026-07-20")
+			state = broken / "state.yaml"
+			state.write_text(
+				state.read_text(encoding="utf-8").replace(
+					"depends_on: []", "depends_on: [2026/07/18/never-existed]",
+				),
+				encoding="utf-8",
+			)
+			git(root, "add", "-A")
+			git(root, "commit", "-q", "-m", "Break a dependency on master")
+			git(root, "checkout", "-q", "-b", "routing")
+			task_file = root / "tasks" / TASK_ID / "task.md"
+			task_file.write_text("# Revised unrelated task\n", encoding="utf-8")
+
+			stderr = io.StringIO()
+			with contextlib.redirect_stderr(stderr):
+				workspace.validate_queue_graph(root)
+			self.assertIn("already on master", stderr.getvalue())
+
+			(broken / "task.md").write_text("# Revised broken task\n", encoding="utf-8")
+			with self.assertRaisesRegex(workspace.WorkspaceError, "missing dependencies"):
+				workspace.validate_queue_graph(root)
+
 	def test_queue_inventory_finds_pending_consolidation_markers(self):
 		with tempfile.TemporaryDirectory() as temporary:
 			root = Path(temporary)
@@ -1157,6 +1265,7 @@ inbox_receipt: {receipt}
 				mappings,
 				receipt,
 			)
+			git(root, "checkout", "-q", "-b", "publication")
 			(root / "tasks" / old_ids[0] / "task.md").write_text(
 				"# Late changed acceptance\n", encoding="utf-8",
 			)
@@ -1412,6 +1521,70 @@ inbox_receipt: receipts/2026/07/18/test.md
 			)
 			self.assertTrue(report["current_satisfies"])
 			self.assertEqual(report["missing_source_tasks"], [])
+
+	def test_source_lineage_accepts_a_rewritten_prerequisite_with_a_witness(self):
+		dependency_id = "2026/07/18/folded-task"
+		witness_id = "2026/07/18/built-on-folded-task"
+		with tempfile.TemporaryDirectory() as temporary:
+			root = Path(temporary)
+			source = root / "source"
+			slot = root / "slot"
+			git_repo(source)
+			tracked = source / "tracked.txt"
+			tracked.write_text("base\n", encoding="utf-8")
+			git(source, "add", "tracked.txt")
+			git(source, "commit", "-m", "Create baseline")
+			git(source, "branch", "work")
+			tracked.write_text("folded\n", encoding="utf-8")
+			git(source, "commit", "-am", "Fold away", "-m", f"Task: {dependency_id}")
+			git(source, "branch", "old-history")
+			git(source, "switch", "work")
+
+			for task_id, depends_on in (
+				(dependency_id, "[]"),
+				(witness_id, f"[{dependency_id}]"),
+			):
+				directory = slot / "tasks" / task_id
+				directory.mkdir(parents=True)
+				(directory / "task.md").write_text("# Task\n", encoding="utf-8")
+				(directory / "state.yaml").write_text(
+					f"""status: approved
+type: implement
+created: 2026-07-18
+project: null
+depends_on: {depends_on}
+claimed_by: macbook-twork
+claimed_at: 2026-07-18T10:00:00+04:00
+claim_order: 1
+lease_until: null
+phase: complete
+inbox_receipt: receipts/2026/07/18/test.md
+""",
+					encoding="utf-8",
+				)
+			target = write_task(slot, status="todo", claimed_by=None)
+			state_path = target / "state.yaml"
+			state_path.write_text(
+				state_path.read_text(encoding="utf-8").replace(
+					"depends_on: []",
+					f"depends_on: [{dependency_id}]",
+				),
+				encoding="utf-8",
+			)
+			config = {"source_root": str(source)}
+
+			report = workspace.source_lineage_report(config, slot, TASK_ID)
+			self.assertFalse(report["current_satisfies"])
+			self.assertEqual(report["witnessed_source_tasks"], {})
+
+			tracked.write_text("rewritten with the folded change\n", encoding="utf-8")
+			git(source, "commit", "-am", "Build on it", "-m", f"Task: {witness_id}")
+			report = workspace.source_lineage_report(config, slot, TASK_ID)
+			self.assertTrue(report["current_satisfies"])
+			self.assertEqual(
+				report["witnessed_source_tasks"],
+				{dependency_id: witness_id},
+			)
 
 	def test_checkpoint_updates_only_local_task_state(self):
 		with tempfile.TemporaryDirectory() as temporary:
@@ -2676,6 +2849,32 @@ class SourcePreparationTest(unittest.TestCase):
 
 
 class MechanicsTest(unittest.TestCase):
+	def test_git_children_get_long_paths_once_without_config(self):
+		environment = {
+			"GIT_CONFIG_COUNT": "1",
+			"GIT_CONFIG_KEY_0": "user.name",
+			"GIT_CONFIG_VALUE_0": "Test",
+		}
+		workspace.enable_git_long_paths(environment)
+		workspace.enable_git_long_paths(environment)
+		self.assertEqual(environment["GIT_CONFIG_COUNT"], "2")
+		self.assertEqual(environment["GIT_CONFIG_KEY_1"], "core.longpaths")
+		with tempfile.TemporaryDirectory() as directory:
+			subprocess.run(["git", "init", "-q", directory], check=True)
+			value = subprocess.run(
+				["git", "-C", directory, "config", "core.longpaths"],
+				stdout=subprocess.PIPE,
+				text=True,
+				env={**os.environ, **environment},
+			)
+			stored = subprocess.run(
+				["git", "-C", directory, "config", "--local", "core.longpaths"],
+				stdout=subprocess.PIPE,
+				text=True,
+			)
+		self.assertEqual(value.stdout.strip(), "true")
+		self.assertEqual(stored.returncode, 1)
+
 	def test_build_lock_recovery_selects_only_exact_owned_processes(self):
 		build = Path(
 			"C:/Telegram/twin/out" if os.name == "nt" else "/Telegram/twin/out"

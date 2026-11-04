@@ -213,7 +213,10 @@ python3 .agents/skills/process-inbox/scripts/workspace.py source-lineage \
 `depends_on` requirements are included automatically. Pass `--require` for an
 explicit source prerequisite named in `task.md` that old routing failed to put
 in `depends_on`. Unfinished dependencies remain a readiness concern and appear
-separately; this gate checks the history of approved source work.
+separately; this gate checks the history of approved source work. A rewrite can
+fold a prerequisite's commit into later work: when an approved task that
+depends on it still has its own commit on `HEAD`, the gate counts the
+prerequisite as present and names that witness in `witnessed_source_tasks`.
 
 If any prospective task reports `current_satisfies: false` at this startup
 gate, leave it out of the frozen batch and continue with the rest; do not
@@ -722,8 +725,9 @@ it needs. Beyond discovered routing it may:
 - rewrite an unclaimed `todo` task of the project whose assumptions the result
   changed, or retire one the result made obsolete by removing its
   `state.yaml` and appending a `## Retired` section that says why, updating
-  its dependents and the project index; never retire a task a split or
-  superseded record names as a successor;
+  its dependents and the project index. A retired task may be named by a
+  split or alias record: it resolves to no successor, and a dependency on it
+  counts as met;
 - add the tasks the result revealed;
 - route around a `Block`: another approach, a smaller task, or an `improve`
   task (an `## Objective` section) for a threshold the code could not meet;
@@ -736,7 +740,8 @@ it needs. Beyond discovered routing it may:
 `route-publish` refuses a revision of a task another checkout started since
 the worker read it, a revision of retired history, and a result that breaks
 the dependency, alias or split graphs; drop that revision and publish the
-rest.
+rest. A graph problem already on master, in records the publication does not
+touch, is printed as a warning and does not block it.
 
 A planner pass interrupted before it published leaves its source result
 without `work/discovered-routed.md`. A planner pass covers the whole project,

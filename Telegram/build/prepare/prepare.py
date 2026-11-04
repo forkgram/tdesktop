@@ -521,7 +521,7 @@ if customRunCommand:
 stage('patches', """
     git clone https://github.com/desktop-app/patches.git
     cd patches
-    git checkout 8b1791a08893e84bc94b3d4ae274747d25852dab
+    git checkout a59fc82462fb2987e9f0ee1498e2db694410ae81
 mac:
     sed -i '' "s/10.13/$MACOSX_DEPLOYMENT_TARGET/g" macos_meson_*.txt
     git clone https://github.com/desktop-app/qt6_highsierra_patches.git qt6_highsierra
@@ -1045,8 +1045,13 @@ mac:
 """)
 
 stage('libjxl', """
-    git clone -b v0.12.0 --recursive --shallow-submodules https://github.com/libjxl/libjxl.git
+    git clone -b v0.12.0 --recursive https://github.com/libjxl/libjxl.git
     cd libjxl
+    cd third_party
+    cd brotli
+    git checkout v1.2.1
+    cd ..
+    cd ..
 """ + setVar("cmake_defines", """
     -DBUILD_SHARED_LIBS=OFF
     -DBUILD_TESTING=OFF
@@ -1195,6 +1200,13 @@ stage('regex', """
 stage('ffmpeg', """
     git clone -b n8.1.3 https://github.com/FFmpeg/FFmpeg.git ffmpeg
     cd ffmpeg
+depends:patches/ffmpeg/*.patch
+win:
+    for %%i in (..\\patches\\ffmpeg\\*.patch) do (
+        git apply "%%i" || exit /b 1
+    )
+mac:
+    find ../patches/ffmpeg -type f -name '*.patch' -print0 | sort -z | xargs -0 git apply
 win:
 depends:patches/ffmpeg.patch
     git apply ../patches/ffmpeg.patch
@@ -1860,7 +1872,7 @@ win:
 stage('tg_owt', """
     git clone https://github.com/desktop-app/tg_owt.git
     cd tg_owt
-    git checkout ec71c06aaaed1cfda8669d51cf3b8d5b447b2031
+    git checkout 020feec5c040fdae2cf752c2c2be62ddde7c236d
     git submodule update --init --recursive
 win:
     SET MOZJPEG_PATH=$LIBS_DIR/mozjpeg
