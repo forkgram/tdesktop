@@ -43,6 +43,27 @@ add_dependencies(Telegram test_text)
 
 target_prepare_qrc(test_text)
 
+add_executable(test_lastseen_badge)
+init_target(test_lastseen_badge "(tests)")
+
+target_include_directories(test_lastseen_badge PRIVATE ${src_loc})
+
+nice_target_sources(test_lastseen_badge ${src_loc}
+PRIVATE
+    data/data_lastseen_badge.cpp
+    data/data_lastseen_badge.h
+    data/data_lastseen_status.h
+    tests/test_lastseen_badge.cpp
+)
+
+target_link_libraries(test_lastseen_badge
+PRIVATE
+    desktop-app::lib_base
+)
+
+set_target_properties(test_lastseen_badge PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+
 if (APPLE)
     add_custom_command(TARGET test_text POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory
