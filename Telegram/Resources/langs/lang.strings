@@ -9428,4 +9428,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_passcode_strength_advice_variety" = "Make it longer and mix in more kinds of characters.";
 "lng_passcode_strength_advice_fine" = "This passcode is hard to guess.";
 
+"lng_tgw_stopped" = "Widget stopped";
+"lng_tgw_log" = "Widget log";
+"lng_tgw_copied" = "Copied: {text}";
+"lng_in_dlg_widget" = "Widget";
+
 // Keys finished

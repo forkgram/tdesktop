@@ -48,6 +48,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history_item_components.h"
 #include "history/history_item_text.h"
 #include "payments/payments_reaction_process.h"
+#include "tgw/tgw_log_box.h"
+#include "tgw/tgw_scroll.h"
+#include "tgw/tgw_selection.h"
+#include "tgw/tgw_touch.h"
 #include "ui/widgets/menu/menu_add_action_callback_factory.h"
 #include "ui/widgets/menu/menu_multiline_action.h"
 #include "ui/widgets/popup_menu.h"
@@ -407,6 +411,8 @@ HistoryInner::HistoryInner(
 	std::make_unique<HistoryView::ReplyButton::Manager>(
 		[=](QRect updated) { update(updated); }))
 , _touchSelectTimer([=] { onTouchSelect(); })
+, _widgetTouch(Tgw::ListTouch::Create(this))
+, _widgetSelection(Tgw::ListSelection::Create(this))
 , _touchScrollTimer([=] { onTouchScrollTimer(); })
 , _touchElastic(scroll, [=](QPoint d, bool) { return _widget->touchScroll(d); })
 , _middleClickAutoscroll(
@@ -817,6 +823,7 @@ void HistoryInner::setupSwipeReplyAndBack() {
 		) | rpl::map([](bool selecting, Ui::ElasticScrollPosition position) {
 			return selecting || (position.overscroll > 0);
 		}),
+		.handoff = _widgetTouch->swipeHandoff(),
 		.skipWheelEvent = [=](not_null<QWheelEvent*> event) {
 			const auto delta = Ui::ScrollDelta(event);
 			if (std::abs(delta.x()) <= std::abs(delta.y())) {
@@ -1249,6 +1256,9 @@ void HistoryInner::enumerateForumThreadBars(Method method) {
 	enumerateItems<EnumItemsDirection::BottomToTop>(barCallback);
 }
 
+template void HistoryInner::enumerateDates(Tgw::ListTouch::Floating);
+template void HistoryInner::enumerateForumThreadBars(Tgw::ListTouch::Floating);
+
 auto HistoryInner::computeRenderSelection(
 		not_null<const SelectedItems*> selected,
 		not_null<Element*> view) const -> RenderSelectionState {
@@ -1321,6 +1331,7 @@ void HistoryInner::clearTextSelection() {
 		_selectedTextSelection = MessageSelection();
 		_selectedText = TextForMimeData();
 	}
+	_widgetSelection->clear();
 }
 
 void HistoryInner::setTextSelection(
@@ -1951,6 +1962,8 @@ void HistoryInner::onTouchScrollTimer() {
 			Qt::NoScrollPhase);
 		if (consumedHorizontal) {
 			_horizontalScrollLocked = true;
+		} else if (!_horizontalScrollLocked && delta.y()) {
+			Tgw::ListScroll::Input(_widget);
 		}
 		const auto weak = base::make_weak(this);
 		const auto hasScrolled = consumedHorizontal
@@ -2053,6 +2066,7 @@ void HistoryInner::touchDeaccelerate(int32 elapsed) {
 }
 
 void HistoryInner::touchEvent(QTouchEvent *e) {
+	const auto bridge = Tgw::TouchBridge();
 	if (e->type() == QEvent::TouchCancel) { // cancel
 		if (!_touchInProgress) {
 			return;
@@ -2066,6 +2080,7 @@ void HistoryInner::touchEvent(QTouchEvent *e) {
 		touchResetSpeed();
 		_touchMaybeSelecting = false;
 		mouseActionCancel();
+		_widgetTouch->cancel();
 		_touchElastic.finish(true);
 		return;
 	}
@@ -2078,10 +2093,12 @@ void HistoryInner::touchEvent(QTouchEvent *e) {
 
 	switch (e->type()) {
 	case QEvent::TouchBegin: {
+		_widgetSelection->dismiss();
 		if (_menu) {
 			e->accept();
 			return; // ignore mouse press, that was hiding context menu
 		}
+		_widgetTouch->retire();
 		if (_touchInProgress || e->touchPoints().isEmpty()) {
 			return;
 		}
@@ -2097,8 +2114,10 @@ void HistoryInner::touchEvent(QTouchEvent *e) {
 			_touchStart = _touchPos;
 		} else {
 			_touchScroll = false;
-			_touchMaybeSelecting = true;
-			_touchSelectTimer.callOnce(QApplication::startDragTime());
+			if (!_widgetTouch->begin(_touchPos)) {
+				_touchMaybeSelecting = true;
+				_touchSelectTimer.callOnce(QApplication::startDragTime());
+			}
 		}
 		_touchSelect = false;
 		_touchStart = _touchPrevPos = _touchPos;
@@ -2107,9 +2126,15 @@ void HistoryInner::touchEvent(QTouchEvent *e) {
 	case QEvent::TouchUpdate: {
 		if (!_touchInProgress) {
 			return;
+		}
+		const auto widget = _widgetTouch->update(_touchPos);
+		if (widget == false) {
+			return;
 		} else if (_touchSelect) {
 			mouseActionUpdate(_touchPos);
-		} else if (!_touchScroll && (_touchPos - _touchStart).manhattanLength() >= QApplication::startDragDistance()) {
+		} else if (!_touchScroll
+			&& widget.value_or((_touchPos - _touchStart).manhattanLength()
+				>= QApplication::startDragDistance())) {
 			_touchSelectTimer.cancel();
 			_touchMaybeSelecting = false;
 			_touchScroll = true;
@@ -2137,9 +2162,11 @@ void HistoryInner::touchEvent(QTouchEvent *e) {
 		const auto notMoved = (_touchPos - _touchStart).manhattanLength()
 			< QApplication::startDragDistance();
 		auto weak = base::make_weak(this);
+		const auto widget = _widgetTouch->end(_touchPos);
+		_touchScroll = widget.value_or(_touchScroll);
 		if (_touchSelect) {
 			if (notMoved || _touchMaybeSelecting.current()) {
-				mouseActionFinish(_touchPos, Qt::RightButton);
+				mouseActionFinish(_touchPos, Qt::RightButton, true);
 				auto contextMenu = QContextMenuEvent(
 					QContextMenuEvent::Mouse,
 					mapFromGlobal(_touchPos),
@@ -2168,9 +2195,9 @@ void HistoryInner::touchEvent(QTouchEvent *e) {
 				_touchWaitingAcceleration = false;
 				_touchPrevPosValid = false;
 			}
-		} else if (notMoved) { // One short tap is like left mouse click.
-			mouseActionStart(_touchPos, Qt::LeftButton);
-			mouseActionFinish(_touchPos, Qt::LeftButton);
+		} else if (notMoved && !widget) { // One short tap is like left mouse click.
+			mouseActionStart(_touchPos, Qt::LeftButton, true);
+			mouseActionFinish(_touchPos, Qt::LeftButton, true);
 		}
 		if (weak) {
 			_touchSelectTimer.cancel();
@@ -2216,9 +2243,13 @@ void HistoryInner::touchScrollUpdated(const QPoint &screenPos) {
 	_touchPos = screenPos;
 	if (consumeScrollAction(_touchPos - _touchPrevPos, Qt::NoScrollPhase)) {
 		_horizontalScrollLocked = true;
-	} else if (!_horizontalScrollLocked
-		&& !_touchElastic.drag(_touchPos - _touchPrevPos)) {
-		return;
+	} else if (!_horizontalScrollLocked) {
+		if ((_touchPos - _touchPrevPos).y()) {
+			Tgw::ListScroll::Input(_widget);
+		}
+		if (!_touchElastic.drag(_touchPos - _touchPrevPos)) {
+			return;
+		}
 	}
 	touchUpdateSpeed();
 }
@@ -2246,6 +2277,7 @@ not_null<HistoryItem*> HistoryInner::lookupItemByPoint(
 }
 
 void HistoryInner::mousePressEvent(QMouseEvent *e) {
+	_widgetSelection->listPress(e->button(), bool(_menu));
 	if (_menu) {
 		e->accept();
 		return; // ignore mouse press, that was hiding context menu
@@ -2270,11 +2302,18 @@ void HistoryInner::mousePressEvent(QMouseEvent *e) {
 	mouseActionStart(e->globalPos(), e->button());
 }
 
-void HistoryInner::mouseActionStart(const QPoint &screenPos, Qt::MouseButton button) {
+void HistoryInner::mouseActionStart(
+		const QPoint &screenPos,
+		Qt::MouseButton button,
+		bool fromTouch) {
 	mouseActionUpdate(screenPos);
-	if (button != Qt::LeftButton) return;
+	if (button != Qt::LeftButton) {
+		_widgetTouch->mousePress(button);
+		return;
+	}
 
 	ClickHandler::pressed();
+	_widgetSelection->press();
 	if (Element::Pressed() != Element::Hovered()) {
 		repaintItem(Element::Pressed());
 		Element::Pressed(Element::Hovered());
@@ -2295,7 +2334,9 @@ void HistoryInner::mouseActionStart(const QPoint &screenPos, Qt::MouseButton but
 	const auto pressed = ClickHandler::getPressed();
 	if (pressed
 		&& (!Element::Hovered()
-			|| !Element::Hovered()->allowTextSelectionByHandler(pressed))) {
+			|| !Element::Hovered()->allowTextSelectionByHandler(
+				pressed,
+				fromTouch))) {
 		_mouseAction = MouseAction::PrepareDrag;
 	} else if (hasSelectedItems()) {
 		if (_dragStateItem
@@ -2582,7 +2623,8 @@ void HistoryInner::viewRemoved(not_null<const Element*> view) {
 
 void HistoryInner::mouseActionFinish(
 		const QPoint &screenPos,
-		Qt::MouseButton button) {
+		Qt::MouseButton button,
+		bool fromTouch) {
 	mouseActionUpdate(screenPos);
 
 	const auto toggleByHandler = [&](const ClickHandlerPtr &handler) {
@@ -2592,7 +2634,22 @@ void HistoryInner::mouseActionFinish(
 		return false;
 	};
 
+	const auto pressed = ClickHandler::getPressed();
+	const auto pressedView = Element::PressedLink();
+	const auto keepFocus = !fromTouch
+		&& pressedView
+		&& pressedView->media()
+		&& pressedView->media()->keepFocusByHandler(pressed);
+	const auto wasPressed = bool(pressed);
 	auto activated = ClickHandler::unpressed();
+	_widgetSelection->release();
+	if (const auto view = Element::HoveredLink()) {
+		if (wasPressed && !activated && view == Element::Moused()) {
+			const auto point = _widget->clampMousePosition(
+				mapFromGlobal(_mousePosition));
+			view->updatePressed(mapPointToItem(point, view));
+		}
+	}
 	const auto pressedItemView = Element::Pressed();
 	if (pressedItemView) {
 		repaintItem(pressedItemView);
@@ -2701,7 +2758,7 @@ void HistoryInner::mouseActionFinish(
 	_mouseSelectType = TextSelectType::Letters;
 	_mouseTextAnchor = TextState();
 	_selectScroll.cancel();
-	_widget->updateTopBarSelection();
+	_widget->updateTopBarSelection(keepFocus);
 
 	if (QGuiApplication::clipboard()->supportsSelection()
 		&& hasSelectedText()
@@ -2726,11 +2783,13 @@ void HistoryInner::mouseReleaseEvent(QMouseEvent *e) {
 		return;
 	}
 	if (_middleClickAutoscroll.active()) {
+		_widgetTouch->mouseRelease(e->button());
 		e->accept();
 		return;
 	}
 	registerReadMetricsActivity();
 	mouseActionFinish(e->globalPos(), e->button());
+	_widgetTouch->mouseRelease(e->button());
 	if (!rect().contains(e->pos())) {
 		leaveEvent(e);
 	}
@@ -2818,7 +2877,15 @@ HistoryView::SelectedQuote HistoryInner::selectedQuote(
 }
 
 void HistoryInner::contextMenuEvent(QContextMenuEvent *e) {
+	if (e->reason() == QContextMenuEvent::Mouse) {
+		mouseActionUpdate(e->globalPos());
+	}
+	if (_widgetTouch->mouseMenu(e)) {
+		e->accept();
+		return;
+	}
 	showContextMenu(e);
+	_widgetSelection->watch(_menu.get());
 }
 
 void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
@@ -3724,6 +3791,7 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 			addSearchAction();
 		} else {
 			addReplyAction(partItemOrLeader);
+			Tgw::ListSelection::FillMenu(this, item);
 			addTodoListAction(partItemOrLeader);
 			addItemActions(item, albumPartItem);
 			if (item && !isUponSelected) {
@@ -3822,6 +3890,9 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 							}, &st::menuIconTranslate);
 						}
 					}
+				}
+				if (view) {
+					Tgw::AddLogAction(_menu, view, controller->uiShow());
 				}
 			}
 		}
@@ -4106,9 +4177,10 @@ bool HistoryInner::hasCopyRestrictionForSelected() const {
 			return true;
 		}
 	}
-	return hasSelectedText()
-		&& _selectedTextItem
-		&& _selectedTextItem->forbidsForward();
+	const auto textItem = hasSelectedText()
+		? _selectedTextItem
+		: _widgetSelection->item();
+	return textItem && textItem->forbidsForward();
 }
 
 bool HistoryInner::showCopyRestrictionForSelected() {
@@ -4117,9 +4189,10 @@ bool HistoryInner::showCopyRestrictionForSelected() {
 			return true;
 		}
 	}
-	return hasSelectedText()
-		&& _selectedTextItem
-		&& showCopyRestriction(_selectedTextItem);
+	const auto textItem = hasSelectedText()
+		? _selectedTextItem
+		: _widgetSelection->item();
+	return textItem && showCopyRestriction(textItem);
 }
 
 void HistoryInner::copySelectedText(bool withImageText) {
@@ -4277,8 +4350,10 @@ HistorySelectedTextParts HistoryInner::getSelectedTextParts() const {
 	if (selected.empty()) {
 		if (const auto view = viewByItem(_selectedTextItem)) {
 			return { .texts = { view->selectedText(_selectedTextSelection) } };
+		} else if (_selectedTextItem) {
+			return { .texts = { _selectedText } };
 		}
-		return { .texts = { _selectedText } };
+		return { .texts = { _widgetSelection->text() } };
 	}
 
 	const auto richContext = (selected.size() > 1);
@@ -5168,7 +5243,8 @@ auto HistoryInner::nextItem(Element *view) -> Element* {
 
 bool HistoryInner::canCopySelected() const {
 	return hasSelectedItems()
-		|| (hasSelectedText() && !_selectedTextSelection.empty());
+		|| (hasSelectedText() && !_selectedTextSelection.empty())
+		|| _widgetSelection->has();
 }
 
 bool HistoryInner::canDeleteSelected() const {
@@ -5429,8 +5505,9 @@ auto HistoryInner::getSelectionState() const
 			++result.canForwardCount;
 		}
 	}
-	result.textSelected = hasSelectedText()
-		&& !_selectedTextSelection.empty();
+	result.textSelected = (hasSelectedText()
+			&& !_selectedTextSelection.empty())
+		|| _widgetSelection->has();
 	return result;
 }
 
@@ -5445,6 +5522,7 @@ void HistoryInner::clearSelected(bool onlyTextSelection) {
 		clearTextSelection();
 		changed = true;
 	}
+	changed = _widgetSelection->clear() || changed;
 	if (changed) {
 		_widget->updateTopBarSelection();
 		_widget->update();
@@ -5506,9 +5584,10 @@ std::vector<not_null<HistoryItem*>> HistoryInner::getSelectedEphemeral() const {
 }
 
 void HistoryInner::onTouchSelect() {
+	const auto bridge = Tgw::TouchBridge();
 	_touchSelect = true;
 	_touchMaybeSelecting = true;
-	mouseActionStart(_touchPos, Qt::LeftButton);
+	mouseActionStart(_touchPos, Qt::LeftButton, true);
 }
 
 auto HistoryInner::reactionButtonParameters(
@@ -5569,6 +5648,14 @@ void HistoryInner::mouseActionUpdate() {
 
 	auto mousePos = mapFromGlobal(_mousePosition);
 	auto point = _widget->clampMousePosition(mousePos);
+
+	// Voice message seek support.
+	if (const auto pressedView = Element::PressedLink()) {
+		if (itemTop(pressedView) >= 0) {
+			pressedView->updatePressed(mapPointToItem(mousePos, pressedView));
+		}
+	}
+	_widgetSelection->update();
 
 	auto m = QPoint();
 
@@ -5822,7 +5909,7 @@ void HistoryInner::mouseActionUpdate() {
 	_acceptsHorizontalScroll = dragState.horizontalScroll;
 	if (_mouseAction == MouseAction::None) {
 		_mouseCursorState = dragState.cursor;
-		if (dragState.link) {
+		if (dragState.link && _mouseCursorState != CursorState::Default) {
 			cur = style::cur_pointer;
 		} else if (_mouseCursorState == CursorState::Text && !hasSelectedItems()) {
 			cur = style::cur_text;
@@ -5902,14 +5989,8 @@ void HistoryInner::mouseActionUpdate() {
 		}
 	}
 
-	// Voice message seek support.
-	if (const auto pressedItem = _dragStateItem) {
-		if (const auto pressedView = viewByItem(pressedItem)) {
-			if (pressedItem->history() == _history || pressedItem->history() == _migrated) {
-				auto adjustedPoint = mapPointToItem(point, pressedView);
-				pressedView->updatePressed(adjustedPoint);
-			}
-		}
+	if (view && !ClickHandler::getPressed()) {
+		view->updatePressed(m);
 	}
 
 	if (_mouseAction == MouseAction::Selecting) {
