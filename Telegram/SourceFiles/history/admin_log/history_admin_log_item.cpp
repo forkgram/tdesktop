@@ -2006,7 +2006,7 @@ void GenerateItems(
 		const auto nextColor = (now.type() == mtpc_peerColor)
 			? now.c_peerColor().vcolor()
 			: tl::conditional<MTPint>();
-		if (prevColor != nextColor) {
+		if (prevColor.value_or(-1) != nextColor.value_or(-1)) {
 			const auto wrap = [&](tl::conditional<MTPint> value) {
 				return value
 					? value->v
