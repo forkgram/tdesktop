@@ -1017,6 +1017,7 @@ void SessionPrivate::connectToServer(bool afterConfig) {
 	}
 
 	destroyAllConnections();
+	_relayHost.clear();
 
 	if (realDcTypeChanged() && _keyCreator) {
 		destroyTemporaryKey();
@@ -1039,23 +1040,28 @@ void SessionPrivate::connectToServer(bool afterConfig) {
 		&& (_options->proxy.type != ProxyData::Type::Mtproto)
 		&& (_options->proxy.type != ProxyData::Type::Web)
 		&& !_options->proxy.tryCustomResolve();
-	const auto webSocketRelay = webSocketUsable
-		? WebSocketRelays::Instance().domainForDc(bareDc)
-		: QString();
+	const auto relayRoute = webSocketUsable
+		? WebSocketRelays::Instance().routeForDc(
+			bareDc,
+			(_currentDcType == DcType::MediaCluster),
+			_instance->isTestMode())
+		: RelayRoute();
+	_relayHost = relayRoute.host;
+	_relayMedia = (_currentDcType == DcType::MediaCluster);
 
 	if (_options->proxy.type == ProxyData::Type::Mtproto
 		|| _options->proxy.type == ProxyData::Type::Web) {
 		// host, port, secret for mtproto proxy are taken from proxy.
 		appendTestConnection(DcOptions::Variants::Tcp, {}, 0, {});
-	} else if (!webSocketRelay.isEmpty()) {
-		// No "-1" for media here, the pool domains have no such records -
-		// media is already signalled by the negative protocol dc id.
+	} else if (relayRoute) {
 		appendTestConnection(
-			DcOptions::Variants::Tcp,
-			u"kws%1.%2"_q.arg(bareDc).arg(webSocketRelay),
+			(relayRoute.kind == RelayRoute::Kind::Http)
+				? DcOptions::Variants::Http
+				: DcOptions::Variants::Tcp,
+			relayRoute.host,
 			443,
 			{},
-			(_instance->isTestMode() ? u"/apiws_test"_q : u"/apiws"_q));
+			relayRoute.path);
 	} else {
 		using Variants = DcOptions::Variants;
 		const auto special = (_currentDcType == DcType::Temporary);
@@ -2397,6 +2403,7 @@ void SessionPrivate::onConnected(
 			"state: %1").arg(connection->debugState()));
 		return restart();
 	}
+	markRelayResult(true);
 
 	_waitForConnected = kMinConnectedTimeout;
 	_waitForConnectedTimer.cancel();
@@ -2427,6 +2434,7 @@ void SessionPrivate::onConnected(
 void SessionPrivate::onDisconnected(
 		not_null<AbstractConnection*> connection) {
 	removeTestConnection(connection);
+	markRelayResult(false);
 
 	if (_testConnections.empty()) {
 		destroyAllConnections();
@@ -2697,12 +2705,21 @@ void SessionPrivate::onError(
 		}
 	}
 	removeTestConnection(connection);
+	markRelayResult(false);
 
 	if (_testConnections.empty()) {
 		handleError(errorCode);
 	} else {
 		confirmBestConnection();
 	}
+}
+
+void SessionPrivate::markRelayResult(bool success) {
+	if (_relayHost.isEmpty()) {
+		return;
+	}
+	const auto host = base::take(_relayHost);
+	WebSocketRelays::Instance().markResult(host, _relayMedia, success);
 }
 
 void SessionPrivate::handleError(int errorCode) {

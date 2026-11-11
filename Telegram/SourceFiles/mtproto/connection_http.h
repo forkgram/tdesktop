@@ -59,6 +59,8 @@ private:
 
 	QNetworkAccessManager _manager;
 	QString _address;
+	QString _path;
+	bool _secure = false;
 
 	QSet<QNetworkReply*> _requests;
 

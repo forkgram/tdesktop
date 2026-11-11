@@ -9,6 +9,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/random.h"
 #include "base/qthelp_url.h"
+#include "mtproto/websocket_relays.h"
+
+#include <QtCore/QtEndian>
 
 namespace MTP {
 namespace details {
@@ -45,10 +48,31 @@ void HttpConnection::sendData(mtpBuffer &&buffer) {
 		QVariant(requestSize));
 	request.setHeader(
 		QNetworkRequest::ContentTypeHeader,
-		QVariant(u"application/x-www-form-urlencoded"_q));
+		QVariant(_secure
+			? u"application/octet-stream"_q
+			: u"application/x-www-form-urlencoded"_q));
+	if (_secure) {
+		request.setRawHeader(
+			QByteArray("accept-encoding"),
+			QByteArray("identity"));
+		request.setAttribute(QNetworkRequest::Http2AllowedAttribute, true);
+	}
+
+	auto reply = _manager.post(request, QByteArray(
+		reinterpret_cast<const char*>(&buffer[2]),
+		requestSize));
+	if (_secure
+		&& WebSocketRelays::Instance().isUserDomain(
+			_address.section('.', 1))) {
+		// Custom workers may sit on deep subdomains their certificate
+		// can't cover, the WebSocket relay ignores those as well.
+		connect(reply, &QNetworkReply::sslErrors, reply, [reply] {
+			reply->ignoreSslErrors();
+		});
+	}
 
 	CONNECTION_LOG_INFO(u"Sending %1 len request."_q.arg(requestSize));
-	_requests.insert(_manager.post(request, QByteArray((const char*)(&buffer[2]), requestSize)));
+	_requests.insert(reply);
 }
 
 void HttpConnection::disconnectFromServer() {
@@ -76,6 +100,8 @@ void HttpConnection::connectToServer(
 		bool protocolForFiles,
 		const QString &webSocketPath) {
 	_address = address;
+	_secure = !webSocketPath.isEmpty();
+	_path = _secure ? webSocketPath : QString();
 	connect(
 		&_manager,
 		&QNetworkAccessManager::finished,
@@ -99,6 +125,14 @@ mtpBuffer HttpConnection::handleResponse(QNetworkReply *reply) {
 	CONNECTION_LOG_INFO(u"Read %1 bytes."_q.arg(response.size()));
 
 	if (response.isEmpty()) return mtpBuffer();
+
+	if (_secure && response.size() == sizeof(qint32)) {
+		// The relay answers a refused request with a bare error code.
+		return mtpBuffer(
+			1,
+			int(qFromLittleEndian<qint32>(
+				reinterpret_cast<const uchar*>(response.constData()))));
+	}
 
 	if (response.size() & 0x03 || response.size() < 8) {
 		CONNECTION_LOG_ERROR(u"Bad response size %1."_q.arg(response.size()));
@@ -259,6 +293,8 @@ int32 HttpConnection::debugState() const {
 QString HttpConnection::transport() const {
 	if (!isConnected()) {
 		return QString();
+	} else if (_secure) {
+		return u"HTTPS"_q;
 	}
 	auto result = u"HTTP"_q;
 	if (qthelp::is_ipv6(_address)) {
@@ -268,6 +304,9 @@ QString HttpConnection::transport() const {
 }
 
 QString HttpConnection::tag() const {
+	if (_secure) {
+		return u"HTTPS"_q;
+	}
 	auto result = u"HTTP"_q;
 	if (qthelp::is_ipv6(_address)) {
 		result += u"/IPv6"_q;
@@ -278,6 +317,10 @@ QString HttpConnection::tag() const {
 }
 
 QUrl HttpConnection::url() const {
+	if (_secure) {
+		// The relay terminates the plain transport at its /api endpoint.
+		return QUrl(u"https://%1%2"_q.arg(_address, _path));
+	}
 	const auto pattern = qthelp::is_ipv6(_address)
 		? u"http://[%1]:%2/api"_q
 		: u"http://%1:%2/api"_q;

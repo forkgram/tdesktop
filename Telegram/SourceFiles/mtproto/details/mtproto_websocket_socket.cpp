@@ -78,13 +78,6 @@ WebSocketSocket::WebSocketSocket(
 	});
 }
 
-WebSocketSocket::~WebSocketSocket() {
-	// Connected, but no packet ever passed the msg_key check - fed garbage.
-	if (_state == State::Connected) {
-		reportResult(false);
-	}
-}
-
 void WebSocketSocket::connectToHost(const QString &address, int port) {
 	Expects(_state == State::NotConnected);
 
@@ -322,16 +315,7 @@ void WebSocketSocket::write(
 	writeFrame(buffer, kOpcodeBinary);
 }
 
-void WebSocketSocket::reportResult(bool success) {
-	if (_resultReported) {
-		return;
-	}
-	_resultReported = true;
-	WebSocketRelays::Instance().markResult(_domain, success);
-}
-
 void WebSocketSocket::plainDisconnected() {
-	reportResult(false);
 	_state = State::NotConnected;
 	_disconnected.fire({});
 }
@@ -340,7 +324,6 @@ void WebSocketSocket::handleError(int errorCode) {
 	if (errorCode) {
 		logError(errorCode, _socket.errorString());
 	}
-	reportResult(false);
 	_state = State::Error;
 	_error.fire({});
 }
@@ -351,12 +334,7 @@ bool WebSocketSocket::isGoodStartNonce(bytes::const_span nonce) {
 }
 
 void WebSocketSocket::timedOut() {
-	reportResult(false);
 	_syncTimeRequests.fire({});
-}
-
-void WebSocketSocket::verifiedDataReceived() {
-	reportResult(true);
 }
 
 bool WebSocketSocket::isConnected() {

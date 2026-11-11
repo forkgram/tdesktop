@@ -95,6 +95,7 @@ private:
 
 	void confirmBestConnection();
 	void removeTestConnection(not_null<AbstractConnection*> connection);
+	void markRelayResult(bool success);
 	[[nodiscard]] int16 getProtocolDcId() const;
 
 	void checkSentRequests();
@@ -197,6 +198,8 @@ private:
 
 	ConnectionPointer _connection;
 	std::vector<TestConnection> _testConnections;
+	QString _relayHost;
+	bool _relayMedia = false;
 	crl::time _startedConnectingAt = 0;
 
 	base::Timer _retryTimer; // exp retry timer

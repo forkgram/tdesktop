@@ -682,6 +682,7 @@ private:
 	QPointer<Ui::Checkbox> _webSocket;
 	QPointer<Ui::SlideWrap<Ui::VerticalLayout>> _webSocketOptions;
 	QPointer<HostInput> _webSocketDomain;
+	QPointer<Ui::Checkbox> _webSocketMedia;
 	std::shared_ptr<Ui::RadioenumGroup<ProxyData::Settings>> _proxySettings;
 	QPointer<Ui::SlideWrap<Ui::Checkbox>> _proxyRotation;
 	QPointer<Ui::SlideWrap<Ui::VerticalLayout>> _proxyRotationOptions;
@@ -1213,6 +1214,13 @@ void ProxiesBox::setupContent() {
 		_webSocketDomain->resize(width, _webSocketDomain->height());
 		_webSocketDomain->moveToLeft(0, 0);
 	}, domainRow->lifetime());
+	_webSocketMedia = webSocketInner->add(
+		object_ptr<Ui::Checkbox>(
+			webSocketInner,
+			tr::lng_proxy_websocket_http2(tr::now),
+			base::options::value<bool>(
+				MTP::kOptionWebSocketMediaMultiplexing)),
+		st::proxyTryIPv6Padding);
 	webSocketInner->add(
 		object_ptr<Ui::FlatLabel>(
 			webSocketInner,
@@ -1325,6 +1333,10 @@ void ProxiesBox::setupContent() {
 		_webSocketOptions->toggle(checked, anim::type::normal);
 		_controller->setWebSocketTransport(checked);
 	}, _webSocket->lifetime());
+	_webSocketMedia->checkedChanges(
+	) | rpl::on_next([=](bool checked) {
+		_controller->setWebSocketMediaMultiplexing(checked);
+	}, _webSocketMedia->lifetime());
 
 	connect(
 		_webSocketDomain.data(),
@@ -2551,6 +2563,20 @@ void ProxiesBoxController::setWebSocketDomain(const QString &domain) {
 		return;
 	}
 	option.set(domain);
+	Core::App().refreshGlobalProxy();
+	if (base::options::value<bool>(MTP::kOptionWebSocketTransport)) {
+		_account->mtp().restart();
+		_settings.connectionTypeChangesNotify();
+	}
+}
+
+void ProxiesBoxController::setWebSocketMediaMultiplexing(bool enabled) {
+	auto &option = base::options::lookup<bool>(
+		MTP::kOptionWebSocketMediaMultiplexing);
+	if (option.value() == enabled) {
+		return;
+	}
+	option.set(enabled);
 	Core::App().refreshGlobalProxy();
 	if (base::options::value<bool>(MTP::kOptionWebSocketTransport)) {
 		_account->mtp().restart();

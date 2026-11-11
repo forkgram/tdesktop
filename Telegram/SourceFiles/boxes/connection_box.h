@@ -95,6 +95,7 @@ public:
 	void setTryIPv6(bool enabled);
 	void setWebSocketTransport(bool enabled);
 	void setWebSocketDomain(const QString &domain);
+	void setWebSocketMediaMultiplexing(bool enabled);
 	rpl::producer<ProxyData::Settings> proxySettingsValue() const;
 
 	[[nodiscard]] bool contains(const ProxyData &proxy) const;

@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/const_string.h"
 #include "base/invoke_queued.h"
 #include "base/options.h"
+#include "base/random.h"
 
 #include <QtCore/QCoreApplication>
 #include <QtNetwork/QNetworkAccessManager>
@@ -34,6 +35,14 @@ base::options::option<QString> OptionWebSocketDomain({
 		" automatic public relay list.",
 });
 
+base::options::toggle OptionWebSocketMediaMultiplexing({
+	.id = kOptionWebSocketMediaMultiplexing,
+	.name = "Media multiplexing (HTTP/2)",
+	.description = "Send media through one HTTP/2 connection to the relay"
+		" instead of a separate WebSocket for every media connection.",
+	.defaultValue = true,
+});
+
 constexpr auto kCooldownBase = crl::time(45 * 1000);
 constexpr auto kCooldownMax = crl::time(300 * 1000);
 constexpr auto kFailuresBeforeSuppress = 6;
@@ -41,6 +50,9 @@ constexpr auto kSuppressDuration = crl::time(60 * 1000);
 constexpr auto kFetchTimeout = crl::time(8 * 1000);
 constexpr auto kFetchTtl = crl::time(12 * 60 * 60 * 1000);
 constexpr auto kForcedFetchInterval = crl::time(5 * 60 * 1000);
+constexpr auto kMinFetchedDomains = 3;
+
+const auto kDirectDomain = u"web.telegram.org"_q;
 
 const auto kMirrors = std::array{
 	"https://raw.githubusercontent.com/Flowseal/tg-ws-proxy/main/.github/cfproxy-domains.txt"_cs,
@@ -73,6 +85,48 @@ const auto kFallbackDomains = std::array{
 	"zaftuzsftqdq.com"_cs,
 };
 
+[[nodiscard]] crl::time EscalatedCooldown(int strikes) {
+	auto cooldown = kCooldownBase;
+	for (auto i = 1; i != strikes && cooldown < kCooldownMax; ++i) {
+		cooldown *= 2;
+	}
+	return std::min(cooldown, kCooldownMax);
+}
+
+struct ParsedHost {
+	int dc = 0;
+	bool dash1 = false;
+	QString domain;
+};
+
+// Hosts are built by routeForDc as kws<dc>[-1].<domain>.
+[[nodiscard]] ParsedHost ParseHost(const QString &host) {
+	if (!host.startsWith(u"kws"_q)) {
+		return {};
+	}
+	auto index = 3;
+	const auto size = int(host.size());
+	auto dc = 0;
+	while (index < size && host.at(index).isDigit()) {
+		dc = dc * 10 + (host.at(index).unicode() - u'0');
+		++index;
+	}
+	if (!dc) {
+		return {};
+	}
+	auto result = ParsedHost();
+	result.dc = dc;
+	if (host.mid(index, 2) == u"-1"_q) {
+		result.dash1 = true;
+		index += 2;
+	}
+	if (index >= size || host.at(index) != u'.') {
+		return {};
+	}
+	result.domain = host.mid(index + 1);
+	return result;
+}
+
 [[nodiscard]] std::vector<QString> DecodeList(const QByteArray &content) {
 	auto result = std::vector<QString>();
 	const auto lines = QString::fromUtf8(content).split(
@@ -91,6 +145,7 @@ const auto kFallbackDomains = std::array{
 
 const char kOptionWebSocketTransport[] = "websocket-transport";
 const char kOptionWebSocketDomain[] = "websocket-relay-domain";
+const char kOptionWebSocketMediaMultiplexing[] = "websocket-media-multiplexing";
 
 QString DecodeRelayDomain(const QString &encoded) {
 	const auto value = encoded.trimmed().toLower();
@@ -134,11 +189,13 @@ WebSocketRelays &WebSocketRelays::Instance() {
 void WebSocketRelays::applyConfig() {
 	const auto enabled = OptionWebSocketTransport.value();
 	const auto userDomain = OptionWebSocketDomain.value().trimmed().toLower();
+	const auto multiplexing = OptionWebSocketMediaMultiplexing.value();
 
 	auto locker = QMutexLocker(&_mutex);
 	const auto changed = (_enabled != enabled) || (_userDomain != userDomain);
 	_enabled = enabled;
 	_userDomain = userDomain;
+	_mediaMultiplexing = multiplexing;
 	if (changed) {
 		rebuildPool();
 
@@ -158,6 +215,8 @@ void WebSocketRelays::rebuildPool() {
 	_pool = std::move(pool);
 	_dcPick.clear();
 	_states.clear();
+	_direct.clear();
+	_dash1.clear();
 	_rotateIndex = 0;
 }
 
@@ -181,70 +240,156 @@ bool WebSocketRelays::suppressedLocked() {
 	return false;
 }
 
-QString WebSocketRelays::domainForDc(int bareDcId) {
-	auto locker = QMutexLocker(&_mutex);
-	if (!_enabled || suppressedLocked()) {
-		return QString();
-	} else if (!_userDomain.isEmpty()) {
-		return _userDomain;
-	} else if (_pool.empty()) {
+bool WebSocketRelays::directCooledLocked(int slot) const {
+	const auto i = _direct.find(slot);
+	return (i != _direct.end()) && (crl::now() < i->second.cooldownUntil);
+}
+
+bool WebSocketRelays::dash1CooledLocked(int bareDcId) const {
+	const auto i = _dash1.find(bareDcId);
+	return (i != _dash1.end()) && (crl::now() < i->second.cooldownUntil);
+}
+
+QString WebSocketRelays::soonestDomainLocked() {
+	if (_pool.empty()) {
 		return QString();
 	}
+	auto best = _pool.front();
+	auto bestUntil = std::numeric_limits<crl::time>::max();
+	for (const auto &domain : _pool) {
+		const auto i = _states.find(domain);
+		const auto until = (i != _states.end())
+			? i->second.cooldownUntil
+			: crl::time(0);
+		if (until < bestUntil) {
+			bestUntil = until;
+			best = domain;
+		}
+	}
+	return best;
+}
+
+RelayRoute WebSocketRelays::routeForDc(
+		int bareDcId,
+		bool media,
+		bool testMode) {
+	auto locker = QMutexLocker(&_mutex);
+	if (!_enabled || suppressedLocked()) {
+		return {};
+	}
+	const auto domainKind = (media && _mediaMultiplexing && !testMode)
+		? RelayRoute::Kind::Http
+		: RelayRoute::Kind::WebSocket;
+	const auto pick = [&](
+			const QString &domain,
+			bool dash1,
+			RelayRoute::Kind kind) {
+		auto result = RelayRoute();
+		result.kind = kind;
+		result.host = u"kws%1%2.%3"_q
+			.arg(bareDcId)
+			.arg(dash1 ? u"-1"_q : QString())
+			.arg(domain);
+		result.path = (kind == RelayRoute::Kind::Http)
+			? u"/api"_q
+			: (testMode ? u"/apiws_test"_q : u"/apiws"_q);
+		return result;
+	};
+
+	if (!_userDomain.isEmpty()) {
+		return pick(_userDomain, false, domainKind);
+	}
 	const auto now = crl::now();
+	const auto slot = bareDcId * 2 + (media ? 1 : 0);
+	// The endpoint of Telegram itself is not rate limited by Cloudflare, so
+	// it goes first while it works; a failure cools down this slot only.
+	if (!directCooledLocked(slot)) {
+		return pick(
+			kDirectDomain,
+			media && !dash1CooledLocked(bareDcId),
+			RelayRoute::Kind::WebSocket);
+	}
 	const auto cooled = [&](const QString &domain) {
 		const auto i = _states.find(domain);
 		return (i != _states.end()) && (now < i->second.cooldownUntil);
 	};
-	const auto i = _dcPick.find(bareDcId);
-	if (i != _dcPick.end() && !cooled(i->second)) {
-		return i->second;
+	// Main and media connections of one datacenter share a single domain.
+	const auto current = _dcPick.find(bareDcId);
+	if (current != _dcPick.end() && !cooled(current->second)) {
+		return pick(current->second, false, domainKind);
 	}
 	for (auto j = 0; j != int(_pool.size()); ++j) {
 		const auto &domain = _pool[(_rotateIndex + j) % _pool.size()];
 		if (!cooled(domain)) {
 			_rotateIndex = (_rotateIndex + j + 1) % _pool.size();
 			_dcPick[bareDcId] = domain;
-			return domain;
+			return pick(domain, false, domainKind);
 		}
 	}
-	auto best = _pool.front();
-	auto bestUntil = std::numeric_limits<crl::time>::max();
-	for (const auto &domain : _pool) {
-		const auto k = _states.find(domain);
-		const auto until = (k != _states.end()) ? k->second.cooldownUntil : 0;
-		if (until < bestUntil) {
-			bestUntil = until;
-			best = domain;
-		}
+	if (_pool.empty()) {
+		return {};
 	}
-	_dcPick[bareDcId] = best;
-	return best;
+	const auto picked = soonestDomainLocked();
+	_dcPick[bareDcId] = picked;
+	return pick(picked, false, domainKind);
 }
 
-void WebSocketRelays::markResult(const QString &domain, bool success) {
+void WebSocketRelays::markDirectFailureLocked(
+		int slot,
+		int bareDcId,
+		bool dash1) {
+	const auto now = crl::now();
+	if (dash1) {
+		auto &state = _dash1[bareDcId];
+		++state.strikes;
+		state.cooldownUntil = now + EscalatedCooldown(state.strikes);
+		return;
+	}
+	auto &state = _direct[slot];
+	++state.strikes;
+	state.cooldownUntil = now + EscalatedCooldown(state.strikes);
+	_dash1.remove(bareDcId);
+}
+
+void WebSocketRelays::markDomainFailureLocked(const QString &domain) {
+	auto &state = _states[domain];
+	++state.strikes;
+	state.cooldownUntil = crl::now() + EscalatedCooldown(state.strikes);
+	for (auto i = _dcPick.begin(); i != _dcPick.end();) {
+		if (i->second == domain) {
+			i = _dcPick.erase(i);
+		} else {
+			++i;
+		}
+	}
+}
+
+void WebSocketRelays::markResult(
+		const QString &host,
+		bool media,
+		bool success) {
 	auto locker = QMutexLocker(&_mutex);
+	const auto parsed = ParseHost(host);
+	if (!parsed.dc) {
+		return;
+	}
+	const auto direct = (parsed.domain == kDirectDomain);
+	const auto slot = parsed.dc * 2 + ((media || parsed.dash1) ? 1 : 0);
 	if (success) {
 		_consecutiveFailures = 0;
 		_suppressedUntil = 0;
-		if (!domain.isEmpty()) {
-			_states.remove(domain);
+		if (direct) {
+			_direct.remove(slot);
+			_dash1.remove(parsed.dc);
+		} else if (!parsed.domain.isEmpty()) {
+			_states.remove(parsed.domain);
 		}
 		return;
 	}
-	if (!domain.isEmpty()) {
-		auto &state = _states[domain];
-		++state.strikes;
-		const auto backoff = kCooldownBase * (crl::time(1) << std::min(
-			state.strikes - 1,
-			8));
-		state.cooldownUntil = crl::now() + std::min(backoff, kCooldownMax);
-		for (auto i = _dcPick.begin(); i != _dcPick.end();) {
-			if (i->second == domain) {
-				i = _dcPick.erase(i);
-			} else {
-				++i;
-			}
-		}
+	if (direct) {
+		markDirectFailureLocked(slot, parsed.dc, parsed.dash1);
+	} else if (!parsed.domain.isEmpty()) {
+		markDomainFailureLocked(parsed.domain);
 	}
 	if (++_consecutiveFailures >= kFailuresBeforeSuppress) {
 		_suppressedUntil = crl::now() + kSuppressDuration;
@@ -271,7 +416,8 @@ void WebSocketRelays::refresh(bool force) {
 	}
 	{
 		auto locker = QMutexLocker(&_mutex);
-		if (!_enabled) {
+		// A domain of the user's own replaces the public pool entirely.
+		if (!_enabled || !_userDomain.isEmpty()) {
 			return;
 		}
 	}
@@ -291,8 +437,13 @@ void WebSocketRelays::fetchNext() {
 		_timeoutTimer.cancel();
 		return;
 	}
-	const auto url = QUrl(kMirrors[_mirrorIndex++].utf16());
+	const auto url = QUrl(
+		QString(kMirrors[_mirrorIndex++].utf16())
+		+ u"?%1"_q.arg(base::RandomValue<quint32>()));
 	auto request = QNetworkRequest(url);
+	request.setHeader(
+		QNetworkRequest::UserAgentHeader,
+		u"tg-ws-proxy"_q);
 	request.setAttribute(
 		QNetworkRequest::RedirectPolicyAttribute,
 		QNetworkRequest::NoLessSafeRedirectPolicy);
@@ -326,7 +477,8 @@ void WebSocketRelays::fetchFailed() {
 }
 
 bool WebSocketRelays::applyFetched(const QByteArray &content) {
-	if (content.isEmpty() || DecodeList(content).empty()) {
+	// A truncated or hijacked response must not replace a working pool.
+	if (DecodeList(content).size() < kMinFetchedDomains) {
 		return false;
 	}
 	_fetchedList = content;

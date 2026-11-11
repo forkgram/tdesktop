@@ -20,12 +20,10 @@ public:
 		const QNetworkProxy &proxy,
 		bool protocolForFiles,
 		const QString &path);
-	~WebSocketSocket();
 
 	void connectToHost(const QString &address, int port) override;
 	bool isGoodStartNonce(bytes::const_span nonce) override;
 	void timedOut() override;
-	void verifiedDataReceived() override;
 	bool isConnected() override;
 	bool hasBytesAvailable() override;
 	int64 read(bytes::span buffer) override;
@@ -52,7 +50,6 @@ private:
 	[[nodiscard]] bool readUpgradeResponse();
 	[[nodiscard]] bool parseFrames();
 	void writeFrame(bytes::const_span payload, quint8 opcode);
-	void reportResult(bool success);
 
 	const QString _path;
 	QString _host;
@@ -63,7 +60,6 @@ private:
 	QByteArray _incoming;
 	QByteArray _readBuffer;
 	int64 _readOffset = 0;
-	bool _resultReported = false;
 	bool _verifyCertificate = true;
 
 };
