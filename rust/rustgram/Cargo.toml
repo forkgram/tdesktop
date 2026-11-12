@@ -19,3 +19,9 @@ gui = ["dep:eframe"]
 name = "rustgram-gui"
 path = "src/bin/rustgram-gui.rs"
 required-features = ["gui"]
+
+[[example]]
+name = "gui-fixture"
+path = "tests/support/gui_fixture.rs"
+required-features = ["gui"]
+test = false

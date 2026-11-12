@@ -4,6 +4,7 @@ use grammers_mtsender::SenderPool;
 use grammers_session::{storages::SqliteSession, types::PeerRef};
 use rustgram::{data_dir, private_session, Result};
 use std::{
+    collections::HashMap,
     env,
     sync::{mpsc, Arc},
     thread,
@@ -26,12 +27,15 @@ enum Request {
     Code(String),
     Password(String),
     History(i64),
+    Send(i64, String),
 }
 enum Event {
     Code,
     Password,
     Chats(Vec<Chat>),
     History(i64, Vec<Message>),
+    Sent(i64),
+    SendFailed(i64),
     Error(String),
     Fatal(String),
 }
@@ -176,31 +180,53 @@ async fn connected_inner(
         Event::Chats(chats.iter().map(|(chat, _)| chat.clone()).collect()),
     );
     while let Some(request) = rx.recv().await {
-        if let Request::History(id) = request {
-            let Some((_, reference)) = chats.iter().find(|(chat, _)| chat.id == id) else {
-                continue;
-            };
-            let mut iter = client.iter_messages(*reference);
-            let mut messages = Vec::new();
-            while messages.len() < 50 {
-                let Some(message) = iter.next().await? else {
-                    break;
+        match request {
+            Request::History(id) => {
+                let Some((_, reference)) = chats.iter().find(|(chat, _)| chat.id == id) else {
+                    continue;
                 };
-                messages.push(Message {
-                    sender: message
-                        .sender()
-                        .and_then(|peer| peer.name())
-                        .unwrap_or("Сервис")
-                        .to_owned(),
-                    text: if message.text().is_empty() {
-                        "[Медиа или служебное сообщение]".into()
-                    } else {
-                        message.text().to_owned()
-                    },
-                });
+                let mut iter = client.iter_messages(*reference);
+                let mut messages = Vec::new();
+                while messages.len() < 50 {
+                    let Some(message) = iter.next().await? else {
+                        break;
+                    };
+                    messages.push(Message {
+                        sender: message
+                            .sender()
+                            .and_then(|peer| peer.name())
+                            .unwrap_or("Сервис")
+                            .to_owned(),
+                        text: if message.text().is_empty() {
+                            "[Медиа или служебное сообщение]".into()
+                        } else {
+                            message.text().to_owned()
+                        },
+                    });
+                }
+                messages.reverse();
+                send_event(tx, ctx, Event::History(id, messages));
             }
-            messages.reverse();
-            send_event(tx, ctx, Event::History(id, messages));
+            Request::Send(id, text) => {
+                let peer = chats
+                    .iter()
+                    .find(|(chat, _)| chat.id == id)
+                    .map(|(_, peer)| *peer);
+                let succeeded = match peer {
+                    Some(peer) => client.send_message(peer, text.as_str()).await.is_ok(),
+                    None => false,
+                };
+                send_event(
+                    tx,
+                    ctx,
+                    if succeeded {
+                        Event::Sent(id)
+                    } else {
+                        Event::SendFailed(id)
+                    },
+                );
+            }
+            _ => (),
         }
     }
     Ok(())
@@ -224,6 +250,9 @@ struct App {
     chats: Vec<Chat>,
     selected: Option<i64>,
     messages: Vec<Message>,
+    drafts: HashMap<i64, String>,
+    pending: HashMap<i64, String>,
+    send_errors: HashMap<i64, String>,
     loading: bool,
 }
 impl App {
@@ -244,6 +273,9 @@ impl App {
             chats: vec![],
             selected: None,
             messages: vec![],
+            drafts: HashMap::new(),
+            pending: HashMap::new(),
+            send_errors: HashMap::new(),
             loading: false,
         }
     }
@@ -252,6 +284,28 @@ impl App {
             self.error = Some("Фоновое соединение завершилось".into());
             self.screen = Screen::Connect;
         }
+    }
+    fn send_draft(&mut self, id: i64) {
+        if self.pending.contains_key(&id) {
+            return;
+        }
+        let Some(text) = self
+            .drafts
+            .get(&id)
+            .filter(|text| !text.trim().is_empty())
+            .cloned()
+        else {
+            return;
+        };
+        if self.tx.send(Request::Send(id, text.clone())).is_err() {
+            self.send_errors
+                .insert(id, "Соединение завершилось. Черновик сохранён.".into());
+            self.error = Some("Фоновое соединение завершилось. Подключитесь снова.".into());
+            self.screen = Screen::Connect;
+            return;
+        }
+        self.pending.insert(id, text);
+        self.send_errors.remove(&id);
     }
     fn receive(&mut self) {
         while let Ok(event) = self.rx.try_recv() {
@@ -268,6 +322,22 @@ impl App {
                     self.loading = false;
                 }
                 Event::History(_, _) => (),
+                Event::Sent(id) => {
+                    if let Some(sent) = self.pending.remove(&id) {
+                        if self.drafts.get(&id) == Some(&sent) {
+                            self.drafts.remove(&id);
+                        }
+                    }
+                    self.send_errors.remove(&id);
+                    if self.selected == Some(id) {
+                        self.loading = true;
+                        self.send(Request::History(id));
+                    }
+                }
+                Event::SendFailed(id) => {
+                    self.pending.remove(&id);
+                    self.send_errors.insert(id, "Не удалось подтвердить отправку. Проверьте чат перед повтором; черновик сохранён.".into());
+                }
                 Event::Error(error) => {
                     self.error = Some(error);
                     self.loading = false;
@@ -275,6 +345,9 @@ impl App {
                 Event::Fatal(error) => {
                     self.error = Some(error);
                     self.screen = Screen::Connect;
+                    for (id, _) in self.pending.drain() {
+                        self.send_errors.insert(id, "Соединение прервано до подтверждения. Проверьте чат перед повтором; черновик сохранён.".into());
+                    }
                     self.chats.clear();
                     self.messages.clear();
                     self.selected = None;
@@ -314,6 +387,38 @@ impl eframe::App for App {
                         }
                     });
                 });
+            if let Some(id) = self.selected {
+                egui::Panel::bottom("compose")
+                    .resizable(false)
+                    .show(ui, |ui| {
+                        if let Some(error) = self.send_errors.get(&id) {
+                            ui.colored_label(Color32::DARK_RED, error);
+                        }
+                        let pending = self.pending.contains_key(&id);
+                        let send = {
+                            let draft = self.drafts.entry(id).or_default();
+                            ui.add_enabled(
+                                !pending,
+                                egui::TextEdit::multiline(draft)
+                                    .desired_rows(2)
+                                    .desired_width(f32::INFINITY)
+                                    .hint_text("Напишите сообщение"),
+                            );
+                            ui.add_enabled(
+                                !pending && !draft.trim().is_empty(),
+                                egui::Button::new(if pending {
+                                    "Отправка…"
+                                } else {
+                                    "Отправить"
+                                }),
+                            )
+                            .clicked()
+                        };
+                        if send {
+                            self.send_draft(id);
+                        }
+                    });
+            }
             egui::CentralPanel::default().show(ui, |ui| {
                 if let Some(id) = self.selected {
                     let title = self
@@ -358,7 +463,7 @@ impl eframe::App for App {
                         Screen::Connect => {
                             ui.label("Номер телефона с кодом страны"); ui.add(egui::TextEdit::singleline(&mut self.phone).hint_text("+7 …"));
                             ui.add_space(12.0);
-                            if ui.button("Подключиться").clicked() { self.error = None; self.screen = Screen::Busy; self.send(Request::Connect(self.phone.clone())); }
+                            if ui.button("Подключиться").clicked() { if self.tx.is_closed() { let (tx, rx) = start_worker(ui.ctx().clone()); self.tx = tx; self.rx = rx; } self.error = None; self.screen = Screen::Busy; self.send(Request::Connect(self.phone.clone())); }
                             ui.add_space(12.0); ui.label(RichText::new("Для существующей сессии номер можно не указывать. Нужны RUSTGRAM_API_ID и RUSTGRAM_API_HASH.").weak().small());
                         }
                         Screen::Busy => { ui.spinner(); ui.label("Подключение…"); }
@@ -394,8 +499,12 @@ fn main() -> eframe::Result {
 mod tests {
     use super::*;
 
-    fn app() -> (App, mpsc::Sender<Event>) {
-        let (tx, _requests) = async_mpsc::unbounded_channel();
+    fn app() -> (
+        App,
+        mpsc::Sender<Event>,
+        async_mpsc::UnboundedReceiver<Request>,
+    ) {
+        let (tx, requests) = async_mpsc::unbounded_channel();
         let (events, rx) = mpsc::channel();
         (
             App {
@@ -411,14 +520,18 @@ mod tests {
                 }],
                 selected: Some(1),
                 messages: vec![],
+                drafts: HashMap::new(),
+                pending: HashMap::new(),
+                send_errors: HashMap::new(),
                 loading: true,
             },
             events,
+            requests,
         )
     }
     #[test]
     fn stale_history_does_not_replace_selected_chat() {
-        let (mut app, events) = app();
+        let (mut app, events, _requests) = app();
         events
             .send(Event::History(
                 2,
@@ -446,11 +559,89 @@ mod tests {
     }
     #[test]
     fn fatal_error_resets_disconnected_view() {
-        let (mut app, events) = app();
+        let (mut app, events, _requests) = app();
         events.send(Event::Fatal("disconnected".into())).unwrap();
         app.receive();
         assert!(app.screen == Screen::Connect);
         assert!(app.chats.is_empty());
         assert_eq!(app.error.as_deref(), Some("disconnected"));
+    }
+    #[test]
+    fn successful_send_clears_only_the_matching_draft_and_refreshes_selected_chat() {
+        let (mut app, events, mut requests) = app();
+        app.drafts.insert(1, "hello".into());
+        app.drafts.insert(2, "other".into());
+        app.send_draft(1);
+        assert!(matches!(requests.try_recv(), Ok(Request::Send(1, text)) if text == "hello"));
+        app.send_draft(1);
+        assert!(requests.try_recv().is_err());
+        assert_eq!(app.drafts.get(&1).map(String::as_str), Some("hello"));
+        events.send(Event::Sent(1)).unwrap();
+        app.receive();
+        assert!(!app.drafts.contains_key(&1));
+        assert_eq!(app.drafts.get(&2).map(String::as_str), Some("other"));
+        assert!(matches!(requests.try_recv(), Ok(Request::History(1))));
+    }
+
+    #[test]
+    fn failed_send_preserves_draft_and_does_not_retry_in_ui() {
+        let (mut app, events, mut requests) = app();
+        app.drafts.insert(1, "do not lose".into());
+        app.send_draft(1);
+        assert!(matches!(requests.try_recv(), Ok(Request::Send(1, _))));
+        app.selected = Some(2);
+        events.send(Event::SendFailed(1)).unwrap();
+        app.receive();
+        assert_eq!(app.drafts.get(&1).map(String::as_str), Some("do not lose"));
+        assert!(app.send_errors.contains_key(&1));
+        assert!(!app.pending.contains_key(&1));
+        assert!(requests.try_recv().is_err());
+    }
+
+    #[test]
+    fn modified_draft_is_not_erased_after_confirmation() {
+        let (mut app, events, mut requests) = app();
+        app.drafts.insert(1, "first".into());
+        app.send_draft(1);
+        let _ = requests.try_recv();
+        app.drafts.insert(1, "new draft".into());
+        events.send(Event::Sent(1)).unwrap();
+        app.receive();
+        assert_eq!(app.drafts.get(&1).map(String::as_str), Some("new draft"));
+    }
+    #[test]
+    fn disconnect_during_send_keeps_draft_and_warns_about_uncertain_delivery() {
+        let (mut app, events, mut requests) = app();
+        app.drafts.insert(1, "message".into());
+        app.send_draft(1);
+        let _ = requests.try_recv();
+        events
+            .send(Event::Fatal("connection closed".into()))
+            .unwrap();
+        app.receive();
+        assert_eq!(app.drafts.get(&1).map(String::as_str), Some("message"));
+        assert!(app.pending.is_empty());
+        assert!(app.send_errors.get(&1).unwrap().contains("подтверждения"));
+        assert!(requests.try_recv().is_err());
+    }
+
+    #[test]
+    fn empty_draft_cannot_be_submitted() {
+        let (mut app, _events, mut requests) = app();
+        app.drafts.insert(1, " \n ".into());
+        app.send_draft(1);
+        assert!(requests.try_recv().is_err());
+        assert!(app.pending.is_empty());
+    }
+    #[test]
+    fn closed_worker_keeps_draft_and_allows_reconnection() {
+        let (mut app, _events, requests) = app();
+        drop(requests);
+        app.drafts.insert(1, "unsent".into());
+        app.send_draft(1);
+        assert_eq!(app.drafts.get(&1).map(String::as_str), Some("unsent"));
+        assert!(app.screen == Screen::Connect);
+        assert!(app.error.is_some());
+        assert!(app.pending.is_empty());
     }
 }
