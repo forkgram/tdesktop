@@ -90,6 +90,15 @@ def main():
                 time.sleep(0.1)
             else:
                 raise RuntimeError("fixture window did not become viewable")
+            # The synthetic incoming event must trigger a history request before sending.
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                log.seek(0)
+                if b"OFFLINE_LIVE_UPDATE_REFRESHED" in log.read():
+                    break
+                time.sleep(0.1)
+            else:
+                raise RuntimeError("fixture did not refresh on incoming event")
             x11.XSetInputFocus(display, window, 1, 0)
             x11.XFlush(display)
             time.sleep(0.5)
@@ -114,7 +123,7 @@ def main():
                 log.seek(0)
                 output = log.read()
                 if b"OFFLINE_SEND_RECEIVED" in output and b"OFFLINE_HISTORY_REFRESHED" in output:
-                    print("PASS: offline GUI accepted text and refreshed history")
+                    print("PASS: offline incoming update and GUI send both refreshed history")
                     return
                 time.sleep(0.1)
             raise RuntimeError("fixture did not observe send and history refresh")

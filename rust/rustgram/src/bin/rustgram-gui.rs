@@ -1,7 +1,7 @@
 use eframe::egui::{self, Color32, RichText};
-use grammers_client::{Client, SignInError};
-use grammers_mtsender::SenderPool;
-use grammers_session::{storages::SqliteSession, types::PeerRef};
+use grammers_client::{update::Update, Client, SignInError};
+use grammers_mtsender::{SenderPool, UpdatesConfiguration};
+use grammers_session::{storages::SqliteSession, types::PeerRef, updates::UpdatesLike};
 use rustgram::{data_dir, private_session, Result};
 use std::{
     collections::HashMap,
@@ -34,6 +34,8 @@ enum Event {
     Password,
     Chats(Vec<Chat>),
     History(i64, Vec<Message>),
+    MessagesChanged(Option<i64>),
+    UpdatesStopped(String),
     Sent(i64),
     SendFailed(i64),
     Error(String),
@@ -89,10 +91,14 @@ async fn connected(
         return Err("Неверные данные Telegram API".into());
     }
     let session = Arc::new(SqliteSession::open(private_session(&data_dir()?)?).await?);
-    let SenderPool { runner, handle, .. } = SenderPool::new(session, api_id);
+    let SenderPool {
+        runner,
+        handle,
+        updates,
+    } = SenderPool::new(session, api_id);
     let client = Client::new(handle);
     let task = tokio::spawn(runner.run());
-    let result = connected_inner(&client, phone, &api_hash, rx, tx, ctx).await;
+    let result = connected_inner(&client, phone, &api_hash, updates, rx, tx, ctx).await;
     task.abort();
     result
 }
@@ -101,6 +107,7 @@ async fn connected_inner(
     client: &Client,
     phone: String,
     api_hash: &str,
+    updates: async_mpsc::Receiver<UpdatesLike>,
     rx: &mut async_mpsc::UnboundedReceiver<Request>,
     tx: &mpsc::Sender<Event>,
     ctx: &egui::Context,
@@ -174,6 +181,47 @@ async fn connected_inner(
             ));
         }
     }
+    let mut stream = client
+        .stream_updates(updates, UpdatesConfiguration { catch_up: true })
+        .await?;
+    let event_tx = tx.clone();
+    let repaint = ctx.clone();
+    // The update stream must be consumed while a history request is in flight.
+    // Aborting this guard on disconnect also drops the stream and its client handle.
+    let _updates_task = AbortOnDrop(tokio::spawn(async move {
+        loop {
+            let update = match stream.next().await {
+                Ok(update) => update,
+                Err(error) => {
+                    send_event(
+                        &event_tx,
+                        &repaint,
+                        Event::UpdatesStopped(error.to_string()),
+                    );
+                    break;
+                }
+            };
+            let changed = match update {
+                Update::NewMessage(message) | Update::MessageEdited(message) => {
+                    message.peer_id().bot_api_dialog_id().map(Some)
+                }
+                // Non-channel deletion updates do not identify the chat.
+                Update::MessageDeleted(_) => Some(None),
+                _ => None,
+            };
+            if let Some(chat) = changed {
+                send_event(&event_tx, &repaint, Event::MessagesChanged(chat));
+                if let Err(error) = stream.sync_update_state().await {
+                    send_event(
+                        &event_tx,
+                        &repaint,
+                        Event::UpdatesStopped(error.to_string()),
+                    );
+                    break;
+                }
+            }
+        }
+    }));
     send_event(
         tx,
         ctx,
@@ -232,6 +280,13 @@ async fn connected_inner(
     Ok(())
 }
 
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 #[derive(PartialEq, Eq)]
 enum Screen {
     Connect,
@@ -254,6 +309,7 @@ struct App {
     pending: HashMap<i64, String>,
     send_errors: HashMap<i64, String>,
     loading: bool,
+    history_dirty: bool,
 }
 impl App {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
@@ -277,6 +333,7 @@ impl App {
             pending: HashMap::new(),
             send_errors: HashMap::new(),
             loading: false,
+            history_dirty: false,
         }
     }
     fn send(&mut self, request: Request) {
@@ -307,6 +364,17 @@ impl App {
         self.pending.insert(id, text);
         self.send_errors.remove(&id);
     }
+    fn refresh_selected(&mut self) {
+        let Some(id) = self.selected else {
+            return;
+        };
+        if self.loading {
+            self.history_dirty = true;
+        } else {
+            self.loading = true;
+            self.send(Request::History(id));
+        }
+    }
     fn receive(&mut self) {
         while let Ok(event) = self.rx.try_recv() {
             match event {
@@ -320,8 +388,22 @@ impl App {
                 Event::History(id, messages) if self.selected == Some(id) => {
                     self.messages = messages;
                     self.loading = false;
+                    if std::mem::take(&mut self.history_dirty) {
+                        self.refresh_selected();
+                    }
                 }
                 Event::History(_, _) => (),
+                Event::MessagesChanged(chat)
+                    if self.selected.is_some() && (chat.is_none() || chat == self.selected) =>
+                {
+                    self.refresh_selected();
+                }
+                Event::MessagesChanged(_) => (),
+                Event::UpdatesStopped(error) => {
+                    self.error = Some(format!(
+                        "Автообновление остановлено: {error}. Обновите чат вручную."
+                    ));
+                }
                 Event::Sent(id) => {
                     if let Some(sent) = self.pending.remove(&id) {
                         if self.drafts.get(&id) == Some(&sent) {
@@ -330,8 +412,7 @@ impl App {
                     }
                     self.send_errors.remove(&id);
                     if self.selected == Some(id) {
-                        self.loading = true;
-                        self.send(Request::History(id));
+                        self.refresh_selected();
                     }
                 }
                 Event::SendFailed(id) => {
@@ -352,14 +433,17 @@ impl App {
                     self.messages.clear();
                     self.selected = None;
                     self.loading = false;
+                    self.history_dirty = false;
                 }
             }
         }
     }
 }
 impl eframe::App for App {
-    fn ui(&mut self, ui: &mut egui::Ui, _: &mut eframe::Frame) {
+    fn logic(&mut self, _: &egui::Context, _: &mut eframe::Frame) {
         self.receive();
+    }
+    fn ui(&mut self, ui: &mut egui::Ui, _: &mut eframe::Frame) {
         if self.screen == Screen::Chats {
             egui::Panel::left("chats")
                 .resizable(true)
@@ -382,8 +466,9 @@ impl eframe::App for App {
                         if let Some(id) = select {
                             self.selected = Some(id);
                             self.messages.clear();
-                            self.loading = true;
-                            self.send(Request::History(id));
+                            self.loading = false;
+                            self.history_dirty = false;
+                            self.refresh_selected();
                         }
                     });
                 });
@@ -425,9 +510,14 @@ impl eframe::App for App {
                         .chats
                         .iter()
                         .find(|c| c.id == id)
-                        .map(|c| c.title.as_str())
-                        .unwrap_or("Чат");
-                    ui.heading(title);
+                        .map(|c| c.title.clone())
+                        .unwrap_or_else(|| "Чат".into());
+                    ui.horizontal(|ui| {
+                        ui.heading(&title);
+                        if ui.button("Обновить").clicked() {
+                            self.refresh_selected();
+                        }
+                    });
                     ui.separator();
                     if self.loading {
                         ui.spinner();
@@ -524,6 +614,7 @@ mod tests {
                 pending: HashMap::new(),
                 send_errors: HashMap::new(),
                 loading: true,
+                history_dirty: false,
             },
             events,
             requests,
@@ -580,6 +671,12 @@ mod tests {
         app.receive();
         assert!(!app.drafts.contains_key(&1));
         assert_eq!(app.drafts.get(&2).map(String::as_str), Some("other"));
+        // A previous history request is already in flight: queue a single
+        // follow-up rather than fetching twice concurrently.
+        assert!(app.history_dirty);
+        assert!(requests.try_recv().is_err());
+        events.send(Event::History(1, vec![])).unwrap();
+        app.receive();
         assert!(matches!(requests.try_recv(), Ok(Request::History(1))));
     }
 
@@ -643,5 +740,43 @@ mod tests {
         assert!(app.screen == Screen::Connect);
         assert!(app.error.is_some());
         assert!(app.pending.is_empty());
+    }
+    #[test]
+    fn updates_during_loading_coalesce_into_one_follow_up() {
+        let (mut app, events, mut requests) = app();
+        for _ in 0..10 {
+            events.send(Event::MessagesChanged(Some(1))).unwrap();
+        }
+        app.receive();
+        assert!(app.history_dirty);
+        assert!(requests.try_recv().is_err());
+        events.send(Event::History(1, vec![])).unwrap();
+        app.receive();
+        assert!(!app.history_dirty);
+        assert!(matches!(requests.try_recv(), Ok(Request::History(1))));
+        assert!(requests.try_recv().is_err());
+    }
+
+    #[test]
+    fn unrelated_updates_do_not_refresh_but_deletion_without_chat_does() {
+        let (mut app, events, mut requests) = app();
+        app.loading = false;
+        events.send(Event::MessagesChanged(Some(2))).unwrap();
+        app.receive();
+        assert!(requests.try_recv().is_err());
+        events.send(Event::MessagesChanged(None)).unwrap();
+        app.receive();
+        assert!(matches!(requests.try_recv(), Ok(Request::History(1))));
+    }
+
+    #[test]
+    fn update_stream_error_is_visible_and_chat_stays_open() {
+        let (mut app, events, _requests) = app();
+        events
+            .send(Event::UpdatesStopped("offline".into()))
+            .unwrap();
+        app.receive();
+        assert!(app.screen == Screen::Chats);
+        assert!(app.error.as_deref().unwrap().contains("offline"));
     }
 }

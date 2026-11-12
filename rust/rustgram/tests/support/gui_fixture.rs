@@ -25,6 +25,7 @@ mod production {
                 let ctx = cc.egui_ctx.clone();
                 thread::spawn(move || {
                     let mut sent = String::new();
+                    send_event(&events, &ctx, Event::MessagesChanged(Some(1)));
                     while let Some(request) = requests.blocking_recv() {
                         match request {
                             Request::Send(1, text) => {
@@ -33,7 +34,11 @@ mod production {
                                 send_event(&events, &ctx, Event::Sent(1));
                             }
                             Request::History(1) => {
-                                eprintln!("OFFLINE_HISTORY_REFRESHED");
+                                if sent.is_empty() {
+                                    eprintln!("OFFLINE_LIVE_UPDATE_REFRESHED");
+                                } else {
+                                    eprintln!("OFFLINE_HISTORY_REFRESHED");
+                                }
                                 send_event(
                                     &events,
                                     &ctx,
@@ -76,6 +81,7 @@ mod production {
                     pending: HashMap::new(),
                     send_errors: HashMap::new(),
                     loading: false,
+                    history_dirty: false,
                 }))
             }),
         )
