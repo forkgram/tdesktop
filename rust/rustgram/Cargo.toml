@@ -8,7 +8,7 @@ license = "GPL-3.0-or-later"
 grammers-client = "0.12"
 grammers-mtsender = "0.12"
 grammers-session = { version = "0.12", features = ["sqlite-storage"] }
-tokio = { version = "1", features = ["rt", "time", "net", "macros"] }
+tokio = { version = "1", features = ["rt", "time", "net", "macros", "fs", "io-util"] }
 rpassword = "7"
 eframe = { version = "0.37", optional = true, default-features = false, features = ["glow", "wayland", "x11", "default_fonts", "accesskit", "clipboard"] }
 

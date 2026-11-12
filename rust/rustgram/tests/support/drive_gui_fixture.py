@@ -76,7 +76,8 @@ def main():
     display = x11.XOpenDisplay(None)
     if not display:
         raise RuntimeError("X11 display unavailable")
-    with tempfile.TemporaryFile() as log:
+    with tempfile.TemporaryDirectory(prefix="rustgram-fixture-") as fixture_dir, tempfile.TemporaryFile() as log:
+        env["RUSTGRAM_FIXTURE_DIR"] = fixture_dir
         process = subprocess.Popen([sys.argv[1]], stdout=log, stderr=log, env=env)
         try:
             deadline = time.monotonic() + 15
@@ -117,6 +118,16 @@ def main():
             wait_for(b"OFFLINE_OLDER_PAGE")
             click(410, 20)
             wait_for(b"OFFLINE_LATEST_PAGE")
+            click(310, 559)
+            wait_for(b"OFFLINE_DOWNLOAD_REQUESTED")
+            deadline = time.monotonic() + 5
+            output_path = os.path.join(fixture_dir, "1_100_0_fixture.txt")
+            while time.monotonic() < deadline and not os.path.exists(output_path):
+                time.sleep(0.1)
+            with open(output_path, "rb") as downloaded:
+                assert downloaded.read() == b"fixture data"
+            assert os.stat(output_path).st_mode & 0o077 == 0
+            assert not any(name.endswith(".part") for name in os.listdir(fixture_dir))
             click(350, 595)
             for char in "hello":
                 key = x11.XKeysymToKeycode(display, x11.XStringToKeysym(char.encode()))
@@ -127,7 +138,7 @@ def main():
             click(310, 629)
             wait_for(b"OFFLINE_SEND_RECEIVED")
             wait_for(b"OFFLINE_HISTORY_REFRESHED")
-            print("PASS: incoming update, dialog and history pages, and send")
+            print("PASS: incoming update, pages, file save, and send")
         finally:
             process.terminate()
             process.wait(timeout=5)

@@ -48,11 +48,36 @@ mod production {
                                     ),
                                 );
                             }
+                            Request::Download(1, 100) => {
+                                eprintln!("OFFLINE_DOWNLOAD_REQUESTED");
+                                let result = (|| -> Result<String> {
+                                    let dir = std::env::var_os("RUSTGRAM_FIXTURE_DIR")
+                                        .ok_or("fixture directory is missing")?;
+                                    let runtime = tokio::runtime::Builder::new_current_thread()
+                                        .enable_all()
+                                        .build()?;
+                                    runtime.block_on(async {
+                                        let mut file = downloads::DownloadFile::create(
+                                            std::path::Path::new(&dir),
+                                            1,
+                                            100,
+                                            "fixture.txt",
+                                            100,
+                                        )?;
+                                        file.write_chunk(b"fixture data").await?;
+                                        let path = file.finish(Some(12)).await?;
+                                        Ok(path.to_string_lossy().into_owned())
+                                    })
+                                })()
+                                .map_err(|error| error.to_string());
+                                send_event(&events, &ctx, Event::DownloadDone(1, 100, result));
+                            }
                             Request::History(history) if history.chat_id == 1 => {
                                 let messages = if history.before.is_some() {
                                     eprintln!("OFFLINE_OLDER_PAGE");
                                     vec![Message {
                                         id: 1,
+                                        attachment: None,
                                         sender: "Earlier".into(),
                                         text: "An earlier message".into(),
                                     }]
@@ -68,6 +93,12 @@ mod production {
                                     (51..=100)
                                         .map(|id| Message {
                                             id,
+                                            attachment: (id == 100).then(|| Attachment {
+                                                label: "Fixture attachment".into(),
+                                                filename: "fixture.txt".into(),
+                                                size: Some(12),
+                                                downloadable: true,
+                                            }),
                                             sender: if id == 100 && !sent.is_empty() {
                                                 "You"
                                             } else {
@@ -104,12 +135,15 @@ mod production {
                     selected: Some(1),
                     messages: vec![Message {
                         id: 1,
+                        attachment: None,
                         sender: "Local example".into(),
                         text: "This is an offline fixture.".into(),
                     }],
                     drafts: HashMap::new(),
                     pending: HashMap::new(),
                     send_errors: HashMap::new(),
+                    downloads_pending: HashSet::new(),
+                    download_status: HashMap::new(),
                     loading: false,
                     history_dirty: false,
                     history_latest: true,

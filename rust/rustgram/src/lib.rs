@@ -1,3 +1,5 @@
+pub mod downloads;
+
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::{
     env,

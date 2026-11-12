@@ -1,10 +1,10 @@
 use eframe::egui::{self, Color32, RichText};
-use grammers_client::{client::DialogIter, update::Update, Client, SignInError};
+use grammers_client::{client::DialogIter, media::Media, tl, update::Update, Client, SignInError};
 use grammers_mtsender::{SenderPool, UpdatesConfiguration};
 use grammers_session::{storages::SqliteSession, types::PeerRef, updates::UpdatesLike};
-use rustgram::{data_dir, private_session, Result};
+use rustgram::{data_dir, downloads, private_session, Result};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     env,
     sync::{mpsc, Arc},
     thread,
@@ -23,6 +23,25 @@ struct Message {
     id: i32,
     sender: String,
     text: String,
+    attachment: Option<Attachment>,
+}
+
+#[derive(Clone, Debug)]
+struct Attachment {
+    label: String,
+    filename: String,
+    size: Option<usize>,
+    downloadable: bool,
+}
+
+fn format_size(size: usize) -> String {
+    if size < 1024 {
+        format!("{size} Б")
+    } else if size < 1_048_576 {
+        format!("{:.1} КиБ", size as f64 / 1024.0)
+    } else {
+        format!("{:.1} МиБ", size as f64 / 1_048_576.0)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -39,6 +58,7 @@ enum Request {
     MoreChats,
     History(HistoryRequest),
     Send(i64, String),
+    Download(i64, i32),
 }
 enum Event {
     Code,
@@ -50,6 +70,7 @@ enum Event {
     UpdatesStopped(String),
     Sent(i64),
     SendFailed(i64),
+    DownloadDone(i64, i32, std::result::Result<String, String>),
     Error(String),
     Fatal(String),
 }
@@ -58,6 +79,140 @@ fn send_event(tx: &mpsc::Sender<Event>, ctx: &egui::Context, event: Event) {
     if tx.send(event).is_ok() {
         ctx.request_repaint();
     }
+}
+
+struct DownloadNotifier {
+    tx: mpsc::Sender<Event>,
+    ctx: egui::Context,
+    chat_id: i64,
+    message_id: i32,
+    finished: bool,
+}
+impl DownloadNotifier {
+    fn complete(&mut self, result: std::result::Result<String, String>) {
+        self.finished = true;
+        send_event(
+            &self.tx,
+            &self.ctx,
+            Event::DownloadDone(self.chat_id, self.message_id, result),
+        );
+    }
+}
+impl Drop for DownloadNotifier {
+    fn drop(&mut self) {
+        if !self.finished {
+            send_event(
+                &self.tx,
+                &self.ctx,
+                Event::DownloadDone(
+                    self.chat_id,
+                    self.message_id,
+                    Err("Загрузка прервана".into()),
+                ),
+            );
+        }
+    }
+}
+
+fn describe_document(document: &grammers_client::media::Document, kind: &str) -> Attachment {
+    let available = matches!(
+        document.raw.document,
+        Some(tl::enums::Document::Document(_))
+    );
+    let expiring = document.raw.ttl_seconds.is_some();
+    let filename = if available {
+        downloads::safe_filename(document.name().unwrap_or("attachment.bin"))
+    } else {
+        "attachment.bin".into()
+    };
+    let size = document.size();
+    Attachment {
+        label: if expiring {
+            format!("{kind} · исчезающее вложение")
+        } else {
+            format!("{kind} · {filename}")
+        },
+        filename,
+        size,
+        downloadable: available
+            && !expiring
+            && size.is_none_or(|n| n as u64 <= downloads::MAX_BYTES),
+    }
+}
+
+fn describe_media(media: &Media) -> Attachment {
+    match media {
+        Media::Photo(photo) => {
+            let available = matches!(photo.raw.photo, Some(tl::enums::Photo::Photo(_)));
+            let expiring = photo.ttl_seconds().is_some();
+            let size = photo.size();
+            Attachment {
+                label: if expiring {
+                    "Исчезающее фото"
+                } else {
+                    "Фото"
+                }
+                .into(),
+                filename: "photo.jpg".into(),
+                size,
+                downloadable: available
+                    && !expiring
+                    && size.is_none_or(|n| n as u64 <= downloads::MAX_BYTES),
+            }
+        }
+        Media::Document(document) => describe_document(document, "Файл"),
+        Media::Sticker(sticker) => describe_document(&sticker.document, "Стикер"),
+        _ => Attachment {
+            label: match media {
+                Media::Contact(_) => "Контакт",
+                Media::Poll(_) => "Опрос",
+                Media::Geo(_) | Media::GeoLive(_) | Media::Venue(_) => "Геопозиция",
+                Media::WebPage(_) => "Ссылка",
+                Media::Dice(_) => "Анимация",
+                _ => "Вложение",
+            }
+            .into(),
+            filename: "attachment.bin".into(),
+            size: None,
+            downloadable: false,
+        },
+    }
+}
+
+async fn download_attachment(
+    client: &Client,
+    peer: PeerRef,
+    chat_id: i64,
+    message_id: i32,
+) -> Result<String> {
+    let message = client
+        .get_messages_by_id(peer, &[message_id])
+        .await?
+        .into_iter()
+        .next()
+        .flatten()
+        .ok_or("Сообщение не найдено")?;
+    let media = message.media().ok_or("Вложение недоступно")?;
+    let attachment = describe_media(&media);
+    if !attachment.downloadable {
+        return Err("Сохранение этого вложения недоступно или превышает 512 МиБ".into());
+    }
+    let parent = data_dir()?;
+    private_session(&parent)?;
+    let dir = downloads::private_dir(&parent)?;
+    let mut file = downloads::DownloadFile::create(
+        &dir,
+        chat_id,
+        message_id,
+        &attachment.filename,
+        downloads::MAX_BYTES,
+    )?;
+    let mut download = client.iter_download(&media);
+    while let Some(chunk) = download.next().await? {
+        file.write_chunk(&chunk).await?;
+    }
+    let path = file.finish(attachment.size.map(|size| size as u64)).await?;
+    Ok(path.to_string_lossy().into_owned())
 }
 
 async fn next_chat_page(
@@ -248,7 +403,9 @@ async fn connected_inner(
         }
     }));
     send_event(tx, ctx, Event::Chats(chats, has_more));
+    let mut download_tasks = tokio::task::JoinSet::new();
     while let Some(request) = rx.recv().await {
+        while download_tasks.try_join_next().is_some() {}
         match request {
             Request::MoreChats => {
                 let (page, has_more) = next_chat_page(&mut iter, &mut peers).await?;
@@ -267,6 +424,7 @@ async fn connected_inner(
                     let Some(message) = iter.next().await? else {
                         break;
                     };
+                    let attachment = message.media().as_ref().map(describe_media);
                     messages.push(Message {
                         id: message.id(),
                         sender: message
@@ -275,10 +433,15 @@ async fn connected_inner(
                             .unwrap_or("Сервис")
                             .to_owned(),
                         text: if message.text().is_empty() {
-                            "[Медиа или служебное сообщение]".into()
+                            if attachment.is_none() {
+                                "[Служебное сообщение]".into()
+                            } else {
+                                String::new()
+                            }
                         } else {
                             message.text().to_owned()
                         },
+                        attachment,
                     });
                 }
                 messages.reverse();
@@ -299,6 +462,44 @@ async fn connected_inner(
                         Event::SendFailed(id)
                     },
                 );
+            }
+            Request::Download(chat_id, message_id) => {
+                let Some(peer) = peers.get(&chat_id).copied() else {
+                    send_event(
+                        tx,
+                        ctx,
+                        Event::DownloadDone(chat_id, message_id, Err("Чат недоступен".into())),
+                    );
+                    continue;
+                };
+                if download_tasks.len() >= 2 {
+                    send_event(
+                        tx,
+                        ctx,
+                        Event::DownloadDone(
+                            chat_id,
+                            message_id,
+                            Err("Не удалось начать загрузку".into()),
+                        ),
+                    );
+                    continue;
+                }
+                let client = client.clone();
+                let tx = tx.clone();
+                let ctx = ctx.clone();
+                download_tasks.spawn(async move {
+                    let mut notifier = DownloadNotifier {
+                        tx,
+                        ctx,
+                        chat_id,
+                        message_id,
+                        finished: false,
+                    };
+                    let result = download_attachment(&client, peer, chat_id, message_id)
+                        .await
+                        .map_err(|error| error.to_string());
+                    notifier.complete(result);
+                });
             }
             _ => (),
         }
@@ -336,6 +537,8 @@ struct App {
     drafts: HashMap<i64, String>,
     pending: HashMap<i64, String>,
     send_errors: HashMap<i64, String>,
+    downloads_pending: HashSet<(i64, i32)>,
+    download_status: HashMap<(i64, i32), String>,
     loading: bool,
     history_dirty: bool,
     history_latest: bool,
@@ -366,6 +569,8 @@ impl App {
             drafts: HashMap::new(),
             pending: HashMap::new(),
             send_errors: HashMap::new(),
+            downloads_pending: HashSet::new(),
+            download_status: HashMap::new(),
             loading: false,
             history_dirty: false,
             history_latest: true,
@@ -401,6 +606,28 @@ impl App {
         }
         self.pending.insert(id, text);
         self.send_errors.remove(&id);
+    }
+    fn start_download(&mut self, chat_id: i64, message_id: i32) {
+        let key = (chat_id, message_id);
+        if self.downloads_pending.contains(&key) {
+            return;
+        }
+        if self.downloads_pending.len() >= 2 {
+            self.download_status
+                .insert(key, "Одновременно можно сохранять два вложения".into());
+            return;
+        }
+        if self
+            .tx
+            .send(Request::Download(chat_id, message_id))
+            .is_err()
+        {
+            self.download_status
+                .insert(key, "Соединение завершилось".into());
+            return;
+        }
+        self.download_status.remove(&key);
+        self.downloads_pending.insert(key);
     }
     fn refresh_selected(&mut self) {
         if self.selected.is_none() {
@@ -497,6 +724,17 @@ impl App {
                     self.pending.remove(&id);
                     self.send_errors.insert(id, "Не удалось подтвердить отправку. Проверьте чат перед повтором; черновик сохранён.".into());
                 }
+                Event::DownloadDone(chat_id, message_id, result) => {
+                    let key = (chat_id, message_id);
+                    self.downloads_pending.remove(&key);
+                    self.download_status.insert(
+                        key,
+                        match result {
+                            Ok(path) => format!("Сохранено: {path}"),
+                            Err(error) => format!("Не удалось сохранить: {error}"),
+                        },
+                    );
+                }
                 Event::Error(error) => {
                     self.error = Some(error);
                     self.loading = false;
@@ -506,6 +744,9 @@ impl App {
                     self.screen = Screen::Connect;
                     for (id, _) in self.pending.drain() {
                         self.send_errors.insert(id, "Соединение прервано до подтверждения. Проверьте чат перед повтором; черновик сохранён.".into());
+                    }
+                    for key in self.downloads_pending.drain() {
+                        self.download_status.insert(key, "Загрузка прервана".into());
                     }
                     self.chats.clear();
                     self.chats_has_more = false;
@@ -638,15 +879,39 @@ impl eframe::App for App {
                                 self.load_history(Some(before));
                             }
                         }
+                        let mut selected_download = None;
                         egui::ScrollArea::vertical()
                             .stick_to_bottom(true)
                             .show(ui, |ui| {
                                 for message in &self.messages {
                                     ui.add_space(8.0);
                                     ui.label(RichText::new(&message.sender).strong());
-                                    ui.label(&message.text);
+                                    if !message.text.is_empty() {
+                                        ui.label(&message.text);
+                                    }
+                                    if let Some(attachment) = &message.attachment {
+                                        ui.label(&attachment.label);
+                                        if let Some(size) = attachment.size {
+                                            ui.label(RichText::new(format_size(size)).weak());
+                                        }
+                                        let key = (id, message.id);
+                                        let pending = self.downloads_pending.contains(&key);
+                                        if attachment.downloadable
+                                            && ui.add_enabled(!pending, egui::Button::new(if pending { "Сохранение…" } else { "Сохранить" })).clicked()
+                                        {
+                                            selected_download = Some(message.id);
+                                        } else if !attachment.downloadable && attachment.size.is_some() {
+                                            ui.label(RichText::new("Сохранение недоступно: лимит 512 МиБ или ограничение вложения").weak());
+                                        }
+                                        if let Some(status) = self.download_status.get(&key) {
+                                            ui.label(status);
+                                        }
+                                    }
                                 }
                             });
+                        if let Some(message_id) = selected_download {
+                            self.start_download(id, message_id);
+                        }
                     }
                 } else {
                     ui.centered_and_justified(|ui| {
@@ -730,6 +995,8 @@ mod tests {
                 drafts: HashMap::new(),
                 pending: HashMap::new(),
                 send_errors: HashMap::new(),
+                downloads_pending: HashSet::new(),
+                download_status: HashMap::new(),
                 loading: true,
                 history_dirty: false,
                 history_latest: true,
@@ -753,6 +1020,7 @@ mod tests {
                 },
                 vec![Message {
                     id: 10,
+                    attachment: None,
                     sender: "x".into(),
                     text: "wrong chat".into(),
                 }],
@@ -770,6 +1038,7 @@ mod tests {
                 },
                 vec![Message {
                     id: 10,
+                    attachment: None,
                     sender: "y".into(),
                     text: "right chat".into(),
                 }],
@@ -977,6 +1246,7 @@ mod tests {
                 request,
                 vec![Message {
                     id: 50,
+                    attachment: None,
                     sender: "a".into(),
                     text: "older".into(),
                 }],
@@ -1011,6 +1281,7 @@ mod tests {
                 },
                 vec![Message {
                     id: 99,
+                    attachment: None,
                     sender: "a".into(),
                     text: "stale".into(),
                 }],
@@ -1024,6 +1295,7 @@ mod tests {
                 newer,
                 vec![Message {
                     id: 49,
+                    attachment: None,
                     sender: "b".into(),
                     text: "older".into(),
                 }],
@@ -1039,6 +1311,7 @@ mod tests {
         let (mut app, events, mut requests) = app();
         app.messages.push(Message {
             id: 1,
+            attachment: None,
             sender: "a".into(),
             text: "first".into(),
         });
@@ -1051,5 +1324,78 @@ mod tests {
         app.receive();
         assert_eq!(app.messages[0].text, "first");
         assert!(!app.history_has_more);
+    }
+    #[test]
+    fn expiring_and_empty_media_are_not_downloadable() {
+        let photo = Media::Photo(grammers_client::media::Photo::from_raw_media(
+            tl::types::MessageMediaPhoto {
+                spoiler: false,
+                live_photo: false,
+                photo: None,
+                ttl_seconds: Some(5),
+                video: None,
+            },
+        ));
+        let attachment = describe_media(&photo);
+        assert!(!attachment.downloadable);
+        assert!(attachment.label.contains("Исчезающее"));
+        let document = Media::Document(grammers_client::media::Document::from_raw_media(
+            tl::types::MessageMediaDocument {
+                nopremium: false,
+                spoiler: false,
+                video: false,
+                round: false,
+                voice: false,
+                document: None,
+                alt_documents: None,
+                video_cover: None,
+                video_timestamp: None,
+                ttl_seconds: None,
+            },
+        ));
+        assert!(!describe_media(&document).downloadable);
+    }
+
+    #[test]
+    fn download_requests_are_bounded_and_failures_can_retry() {
+        let (mut app, events, mut requests) = app();
+        app.start_download(1, 10);
+        app.start_download(1, 10);
+        app.start_download(1, 11);
+        app.start_download(1, 12);
+        assert!(matches!(requests.try_recv(), Ok(Request::Download(1, 10))));
+        assert!(matches!(requests.try_recv(), Ok(Request::Download(1, 11))));
+        assert!(requests.try_recv().is_err());
+        assert!(app.download_status.contains_key(&(1, 12)));
+        events
+            .send(Event::DownloadDone(1, 10, Err("failed".into())))
+            .unwrap();
+        app.receive();
+        assert!(!app.downloads_pending.contains(&(1, 10)));
+        app.start_download(1, 10);
+        assert!(matches!(requests.try_recv(), Ok(Request::Download(1, 10))));
+    }
+    #[test]
+    fn attachment_sizes_do_not_round_small_files_to_zero() {
+        assert_eq!(format_size(12), "12 Б");
+        assert_eq!(format_size(1024), "1.0 КиБ");
+        assert_eq!(format_size(1_048_576), "1.0 МиБ");
+    }
+    #[test]
+    fn interrupted_download_notifies_ui_once() {
+        let (events, rx) = mpsc::channel();
+        let notifier = DownloadNotifier {
+            tx: events,
+            ctx: egui::Context::default(),
+            chat_id: 1,
+            message_id: 5,
+            finished: false,
+        };
+        drop(notifier);
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(Event::DownloadDone(1, 5, Err(_)))
+        ));
+        assert!(rx.try_recv().is_err());
     }
 }
