@@ -17,8 +17,8 @@ Telegram API и MTProto предоставляет `grammers` на Rust. Для 
 Передайте их через переменные `RUSTGRAM_API_ID` и `RUSTGRAM_API_HASH`, затем:
 
 ```sh
-cargo run --manifest-path rust/rustgram/Cargo.toml -- dialogs
-cargo run --manifest-path rust/rustgram/Cargo.toml -- history CHAT_ID 20
+cargo run --manifest-path rust/rustgram/Cargo.toml --bin rustgram -- dialogs
+cargo run --manifest-path rust/rustgram/Cargo.toml --bin rustgram -- history CHAT_ID 20
 ```
 
 `CHAT_ID` берётся из списка диалогов; лимит истории от 1 до 100.
@@ -34,3 +34,16 @@ cargo run --manifest-path rust/rustgram/Cargo.toml -- history CHAT_ID 20
 само по себе не отзывает удалённую авторизацию.
 
 Офлайн-проверка: `cargo test --manifest-path rust/rustgram/Cargo.toml`.
+
+## Экспериментальное окно
+
+При тех же переменных окружения графическую версию можно запустить так:
+
+```sh
+cargo run --manifest-path rust/rustgram/Cargo.toml --features gui --bin rustgram-gui
+```
+
+Доступны вход, первые 50 диалогов и последние 50 сообщений выбранного чата.
+Список и история пока не обновляются автоматически; отправка сообщений, медиа,
+пагинация и перенос сессии Forkgram ещё не реализованы. Закрытие окна завершает
+приложение. Авторизация и работа с реальными чатами ещё не проверялись.
