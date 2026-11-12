@@ -1,5 +1,5 @@
 use eframe::egui::{self, Color32, RichText};
-use grammers_client::{update::Update, Client, SignInError};
+use grammers_client::{client::DialogIter, update::Update, Client, SignInError};
 use grammers_mtsender::{SenderPool, UpdatesConfiguration};
 use grammers_session::{storages::SqliteSession, types::PeerRef, updates::UpdatesLike};
 use rustgram::{data_dir, private_session, Result};
@@ -11,6 +11,8 @@ use std::{
 };
 use tokio::sync::mpsc as async_mpsc;
 
+const PAGE_SIZE: usize = 50;
+
 #[derive(Clone, Debug)]
 struct Chat {
     id: i64,
@@ -18,22 +20,32 @@ struct Chat {
 }
 #[derive(Clone, Debug)]
 struct Message {
+    id: i32,
     sender: String,
     text: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct HistoryRequest {
+    chat_id: i64,
+    serial: u64,
+    before: Option<i32>,
 }
 
 enum Request {
     Connect(String),
     Code(String),
     Password(String),
-    History(i64),
+    MoreChats,
+    History(HistoryRequest),
     Send(i64, String),
 }
 enum Event {
     Code,
     Password,
-    Chats(Vec<Chat>),
-    History(i64, Vec<Message>),
+    Chats(Vec<Chat>, bool),
+    MoreChats(Vec<Chat>, bool),
+    History(HistoryRequest, Vec<Message>),
     MessagesChanged(Option<i64>),
     UpdatesStopped(String),
     Sent(i64),
@@ -46,6 +58,33 @@ fn send_event(tx: &mpsc::Sender<Event>, ctx: &egui::Context, event: Event) {
     if tx.send(event).is_ok() {
         ctx.request_repaint();
     }
+}
+
+async fn next_chat_page(
+    iter: &mut DialogIter,
+    peers: &mut HashMap<i64, PeerRef>,
+) -> Result<(Vec<Chat>, bool)> {
+    let mut page = Vec::new();
+    while page.len() < PAGE_SIZE {
+        let Some(dialog) = iter.next().await? else {
+            return Ok((page, false));
+        };
+        let peer = dialog.peer();
+        if let Some(id) = peer.id().bot_api_dialog_id() {
+            if let std::collections::hash_map::Entry::Vacant(entry) = peers.entry(id) {
+                if let Some(reference) = peer.to_ref().await? {
+                    entry.insert(reference);
+                    page.push(Chat {
+                        id,
+                        title: peer.name().unwrap_or("Без названия").to_owned(),
+                    });
+                }
+            }
+        }
+    }
+    // If the final page has exactly PAGE_SIZE items, one more request is needed
+    // to distinguish that case from an account with additional dialogs.
+    Ok((page, true))
 }
 
 fn start_worker(
@@ -165,22 +204,8 @@ async fn connected_inner(
         }
     }
     let mut iter = client.iter_dialogs();
-    let mut chats: Vec<(Chat, PeerRef)> = Vec::new();
-    while chats.len() < 50 {
-        let Some(dialog) = iter.next().await? else {
-            break;
-        };
-        let peer = dialog.peer();
-        if let (Some(id), Some(reference)) = (peer.id().bot_api_dialog_id(), peer.to_ref().await?) {
-            chats.push((
-                Chat {
-                    id,
-                    title: peer.name().unwrap_or("Без названия").to_owned(),
-                },
-                reference,
-            ));
-        }
-    }
+    let mut peers = HashMap::new();
+    let (chats, has_more) = next_chat_page(&mut iter, &mut peers).await?;
     let mut stream = client
         .stream_updates(updates, UpdatesConfiguration { catch_up: true })
         .await?;
@@ -222,24 +247,28 @@ async fn connected_inner(
             }
         }
     }));
-    send_event(
-        tx,
-        ctx,
-        Event::Chats(chats.iter().map(|(chat, _)| chat.clone()).collect()),
-    );
+    send_event(tx, ctx, Event::Chats(chats, has_more));
     while let Some(request) = rx.recv().await {
         match request {
-            Request::History(id) => {
-                let Some((_, reference)) = chats.iter().find(|(chat, _)| chat.id == id) else {
+            Request::MoreChats => {
+                let (page, has_more) = next_chat_page(&mut iter, &mut peers).await?;
+                send_event(tx, ctx, Event::MoreChats(page, has_more));
+            }
+            Request::History(history) => {
+                let Some(reference) = peers.get(&history.chat_id) else {
                     continue;
                 };
-                let mut iter = client.iter_messages(*reference);
+                let mut iter = client.iter_messages(*reference).limit(PAGE_SIZE);
+                if let Some(before) = history.before {
+                    iter = iter.offset_id(before);
+                }
                 let mut messages = Vec::new();
-                while messages.len() < 50 {
+                while messages.len() < PAGE_SIZE {
                     let Some(message) = iter.next().await? else {
                         break;
                     };
                     messages.push(Message {
+                        id: message.id(),
                         sender: message
                             .sender()
                             .and_then(|peer| peer.name())
@@ -253,13 +282,10 @@ async fn connected_inner(
                     });
                 }
                 messages.reverse();
-                send_event(tx, ctx, Event::History(id, messages));
+                send_event(tx, ctx, Event::History(history, messages));
             }
             Request::Send(id, text) => {
-                let peer = chats
-                    .iter()
-                    .find(|(chat, _)| chat.id == id)
-                    .map(|(_, peer)| *peer);
+                let peer = peers.get(&id).copied();
                 let succeeded = match peer {
                     Some(peer) => client.send_message(peer, text.as_str()).await.is_ok(),
                     None => false,
@@ -303,6 +329,8 @@ struct App {
     secret: String,
     error: Option<String>,
     chats: Vec<Chat>,
+    chats_has_more: bool,
+    chats_loading: bool,
     selected: Option<i64>,
     messages: Vec<Message>,
     drafts: HashMap<i64, String>,
@@ -310,6 +338,10 @@ struct App {
     send_errors: HashMap<i64, String>,
     loading: bool,
     history_dirty: bool,
+    history_latest: bool,
+    history_changed: bool,
+    history_has_more: bool,
+    history_serial: u64,
 }
 impl App {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
@@ -327,6 +359,8 @@ impl App {
             secret: String::new(),
             error: None,
             chats: vec![],
+            chats_has_more: false,
+            chats_loading: false,
             selected: None,
             messages: vec![],
             drafts: HashMap::new(),
@@ -334,6 +368,10 @@ impl App {
             send_errors: HashMap::new(),
             loading: false,
             history_dirty: false,
+            history_latest: true,
+            history_changed: false,
+            history_has_more: false,
+            history_serial: 0,
         }
     }
     fn send(&mut self, request: Request) {
@@ -365,14 +403,37 @@ impl App {
         self.send_errors.remove(&id);
     }
     fn refresh_selected(&mut self) {
-        let Some(id) = self.selected else {
+        if self.selected.is_none() {
             return;
-        };
+        }
+        if !self.history_latest {
+            self.history_changed = true;
+            return;
+        }
         if self.loading {
             self.history_dirty = true;
         } else {
-            self.loading = true;
-            self.send(Request::History(id));
+            self.load_history(None);
+        }
+    }
+    fn load_history(&mut self, before: Option<i32>) {
+        let Some(chat_id) = self.selected else {
+            return;
+        };
+        self.history_serial = self.history_serial.wrapping_add(1);
+        self.history_latest = before.is_none();
+        self.history_dirty = false;
+        self.loading = true;
+        self.send(Request::History(HistoryRequest {
+            chat_id,
+            serial: self.history_serial,
+            before,
+        }));
+    }
+    fn load_more_chats(&mut self) {
+        if self.chats_has_more && !self.chats_loading {
+            self.chats_loading = true;
+            self.send(Request::MoreChats);
         }
     }
     fn receive(&mut self) {
@@ -380,13 +441,30 @@ impl App {
             match event {
                 Event::Code => self.screen = Screen::Code,
                 Event::Password => self.screen = Screen::Password,
-                Event::Chats(chats) => {
+                Event::Chats(chats, has_more) => {
                     self.chats = chats;
+                    self.chats_has_more = has_more;
+                    self.chats_loading = false;
                     self.screen = Screen::Chats;
                     self.error = None;
                 }
-                Event::History(id, messages) if self.selected == Some(id) => {
-                    self.messages = messages;
+                Event::MoreChats(chats, has_more) => {
+                    self.chats.extend(chats);
+                    self.chats_has_more = has_more;
+                    self.chats_loading = false;
+                }
+                Event::History(request, messages)
+                    if self.selected == Some(request.chat_id)
+                        && self.history_serial == request.serial =>
+                {
+                    self.history_has_more = messages.len() == PAGE_SIZE;
+                    // An empty older page leaves the current page on screen.
+                    if request.before.is_none() || !messages.is_empty() {
+                        self.messages = messages;
+                    }
+                    if request.before.is_none() {
+                        self.history_changed = false;
+                    }
                     self.loading = false;
                     if std::mem::take(&mut self.history_dirty) {
                         self.refresh_selected();
@@ -430,10 +508,15 @@ impl App {
                         self.send_errors.insert(id, "Соединение прервано до подтверждения. Проверьте чат перед повтором; черновик сохранён.".into());
                     }
                     self.chats.clear();
+                    self.chats_has_more = false;
+                    self.chats_loading = false;
                     self.messages.clear();
                     self.selected = None;
                     self.loading = false;
                     self.history_dirty = false;
+                    self.history_latest = true;
+                    self.history_changed = false;
+                    self.history_has_more = false;
                 }
             }
         }
@@ -466,9 +549,23 @@ impl eframe::App for App {
                         if let Some(id) = select {
                             self.selected = Some(id);
                             self.messages.clear();
-                            self.loading = false;
-                            self.history_dirty = false;
-                            self.refresh_selected();
+                            self.history_changed = false;
+                            self.history_has_more = false;
+                            self.load_history(None);
+                        }
+                        if self.chats_has_more
+                            && ui
+                                .add_enabled(
+                                    !self.chats_loading,
+                                    egui::Button::new(if self.chats_loading {
+                                        "Загрузка…"
+                                    } else {
+                                        "Показать ещё чаты"
+                                    }),
+                                )
+                                .clicked()
+                        {
+                            self.load_more_chats();
                         }
                     });
                 });
@@ -514,15 +611,33 @@ impl eframe::App for App {
                         .unwrap_or_else(|| "Чат".into());
                     ui.horizontal(|ui| {
                         ui.heading(&title);
-                        if ui.button("Обновить").clicked() {
-                            self.refresh_selected();
+                        let label = if self.history_latest {
+                            "Обновить"
+                        } else {
+                            "К последним"
+                        };
+                        if ui
+                            .add_enabled(!self.loading, egui::Button::new(label))
+                            .clicked()
+                        {
+                            self.load_history(None);
                         }
                     });
                     ui.separator();
+                    if !self.history_latest && self.history_changed {
+                        ui.label("Есть новые изменения. Вернитесь к последним сообщениям.");
+                    }
                     if self.loading {
                         ui.spinner();
                         ui.label("Загрузка сообщений…");
                     } else {
+                        let older = self.messages.first().map(|message| message.id);
+                        if self.history_has_more && ui.button("Более ранние сообщения").clicked()
+                        {
+                            if let Some(before) = older {
+                                self.load_history(Some(before));
+                            }
+                        }
                         egui::ScrollArea::vertical()
                             .stick_to_bottom(true)
                             .show(ui, |ui| {
@@ -604,6 +719,8 @@ mod tests {
                 phone: String::new(),
                 secret: String::new(),
                 error: None,
+                chats_has_more: false,
+                chats_loading: false,
                 chats: vec![Chat {
                     id: 1,
                     title: "first".into(),
@@ -615,6 +732,10 @@ mod tests {
                 send_errors: HashMap::new(),
                 loading: true,
                 history_dirty: false,
+                history_latest: true,
+                history_changed: false,
+                history_has_more: false,
+                history_serial: 1,
             },
             events,
             requests,
@@ -625,8 +746,13 @@ mod tests {
         let (mut app, events, _requests) = app();
         events
             .send(Event::History(
-                2,
+                HistoryRequest {
+                    chat_id: 2,
+                    serial: 1,
+                    before: None,
+                },
                 vec![Message {
+                    id: 10,
                     sender: "x".into(),
                     text: "wrong chat".into(),
                 }],
@@ -637,8 +763,13 @@ mod tests {
         assert!(app.loading);
         events
             .send(Event::History(
-                1,
+                HistoryRequest {
+                    chat_id: 1,
+                    serial: 1,
+                    before: None,
+                },
                 vec![Message {
+                    id: 10,
                     sender: "y".into(),
                     text: "right chat".into(),
                 }],
@@ -675,9 +806,21 @@ mod tests {
         // follow-up rather than fetching twice concurrently.
         assert!(app.history_dirty);
         assert!(requests.try_recv().is_err());
-        events.send(Event::History(1, vec![])).unwrap();
+        events
+            .send(Event::History(
+                HistoryRequest {
+                    chat_id: 1,
+                    serial: 1,
+                    before: None,
+                },
+                vec![],
+            ))
+            .unwrap();
         app.receive();
-        assert!(matches!(requests.try_recv(), Ok(Request::History(1))));
+        assert!(matches!(
+            requests.try_recv(),
+            Ok(Request::History(HistoryRequest { chat_id: 1, .. }))
+        ));
     }
 
     #[test]
@@ -750,10 +893,22 @@ mod tests {
         app.receive();
         assert!(app.history_dirty);
         assert!(requests.try_recv().is_err());
-        events.send(Event::History(1, vec![])).unwrap();
+        events
+            .send(Event::History(
+                HistoryRequest {
+                    chat_id: 1,
+                    serial: 1,
+                    before: None,
+                },
+                vec![],
+            ))
+            .unwrap();
         app.receive();
         assert!(!app.history_dirty);
-        assert!(matches!(requests.try_recv(), Ok(Request::History(1))));
+        assert!(matches!(
+            requests.try_recv(),
+            Ok(Request::History(HistoryRequest { chat_id: 1, .. }))
+        ));
         assert!(requests.try_recv().is_err());
     }
 
@@ -766,7 +921,10 @@ mod tests {
         assert!(requests.try_recv().is_err());
         events.send(Event::MessagesChanged(None)).unwrap();
         app.receive();
-        assert!(matches!(requests.try_recv(), Ok(Request::History(1))));
+        assert!(matches!(
+            requests.try_recv(),
+            Ok(Request::History(HistoryRequest { chat_id: 1, .. }))
+        ));
     }
 
     #[test]
@@ -778,5 +936,120 @@ mod tests {
         app.receive();
         assert!(app.screen == Screen::Chats);
         assert!(app.error.as_deref().unwrap().contains("offline"));
+    }
+    #[test]
+    fn chat_pages_append_and_duplicate_clicks_are_ignored() {
+        let (mut app, events, mut requests) = app();
+        app.chats_has_more = true;
+        app.load_more_chats();
+        app.load_more_chats();
+        assert!(matches!(requests.try_recv(), Ok(Request::MoreChats)));
+        assert!(requests.try_recv().is_err());
+        events
+            .send(Event::MoreChats(
+                vec![Chat {
+                    id: 2,
+                    title: "second".into(),
+                }],
+                false,
+            ))
+            .unwrap();
+        app.receive();
+        assert_eq!(app.chats.len(), 2);
+        assert_eq!(app.chats[1].id, 2);
+        assert!(!app.chats_has_more);
+        assert!(!app.chats_loading);
+    }
+
+    #[test]
+    fn older_history_stays_visible_on_update_until_latest_is_requested() {
+        let (mut app, events, mut requests) = app();
+        app.loading = false;
+        app.load_history(Some(51));
+        let request = match requests.try_recv().unwrap() {
+            Request::History(request) => request,
+            _ => panic!("expected older history request"),
+        };
+        assert_eq!(request.before, Some(51));
+        events.send(Event::MessagesChanged(Some(1))).unwrap();
+        events
+            .send(Event::History(
+                request,
+                vec![Message {
+                    id: 50,
+                    sender: "a".into(),
+                    text: "older".into(),
+                }],
+            ))
+            .unwrap();
+        app.receive();
+        assert_eq!(app.messages[0].text, "older");
+        assert!(!app.history_latest);
+        assert!(app.history_changed);
+        assert!(requests.try_recv().is_err());
+        app.load_history(None);
+        assert!(matches!(
+            requests.try_recv(),
+            Ok(Request::History(HistoryRequest { before: None, .. }))
+        ));
+    }
+
+    #[test]
+    fn stale_response_for_same_chat_does_not_override_newer_page() {
+        let (mut app, events, mut requests) = app();
+        app.load_history(Some(50));
+        let newer = match requests.try_recv().unwrap() {
+            Request::History(request) => request,
+            _ => panic!("expected history request"),
+        };
+        events
+            .send(Event::History(
+                HistoryRequest {
+                    chat_id: 1,
+                    serial: 1,
+                    before: None,
+                },
+                vec![Message {
+                    id: 99,
+                    sender: "a".into(),
+                    text: "stale".into(),
+                }],
+            ))
+            .unwrap();
+        app.receive();
+        assert!(app.messages.is_empty());
+        assert!(app.loading);
+        events
+            .send(Event::History(
+                newer,
+                vec![Message {
+                    id: 49,
+                    sender: "b".into(),
+                    text: "older".into(),
+                }],
+            ))
+            .unwrap();
+        app.receive();
+        assert_eq!(app.messages[0].text, "older");
+        assert!(!app.loading);
+    }
+
+    #[test]
+    fn empty_older_page_keeps_current_messages() {
+        let (mut app, events, mut requests) = app();
+        app.messages.push(Message {
+            id: 1,
+            sender: "a".into(),
+            text: "first".into(),
+        });
+        app.load_history(Some(1));
+        let request = match requests.try_recv().unwrap() {
+            Request::History(request) => request,
+            _ => panic!("expected history request"),
+        };
+        events.send(Event::History(request, vec![])).unwrap();
+        app.receive();
+        assert_eq!(app.messages[0].text, "first");
+        assert!(!app.history_has_more);
     }
 }
