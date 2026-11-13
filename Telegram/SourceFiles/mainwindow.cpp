@@ -627,6 +627,7 @@ void MainWindow::ensureLayerCreated() {
 	_layer = base::make_unique_q<Ui::LayerStackWidget>(
 		bodyWidget(),
 		crl::guard(this, [=] { return controller().uiShow(); }));
+	_layerShown = true;
 
 	_layer->hideFinishEvents(
 	) | rpl::filter([=] {
@@ -652,6 +653,7 @@ void MainWindow::destroyLayer() {
 
 	auto layer = base::take(_layer);
 	_boxShown = false;
+	_layerShown = false;
 	const auto resetFocus = Ui::InFocusChain(layer);
 	if (resetFocus) {
 		setFocus();
@@ -717,6 +719,10 @@ void MainWindow::showOrHideBoxOrLayer(
 
 bool MainWindow::ui_isLayerShown() const {
 	return _layer != nullptr;
+}
+
+rpl::producer<bool> MainWindow::ui_layerShownValue() const {
+	return _layerShown.value();
 }
 
 rpl::producer<bool> MainWindow::ui_boxShownValue() const {

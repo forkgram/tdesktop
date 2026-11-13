@@ -227,6 +227,7 @@ public:
 	[[nodiscard]] rpl::producer<Api::SendOptions> sendRequests() const;
 	[[nodiscard]] bool trySendExtractedMedia(Api::SendOptions options);
 	[[nodiscard]] bool extractMediaActive() const;
+	[[nodiscard]] rpl::producer<> replyToForwardRequests() const;
 	[[nodiscard]] rpl::producer<VoiceToSend> sendVoiceRequests() const;
 	[[nodiscard]] rpl::producer<QString> sendCommandRequests() const;
 	[[nodiscard]] rpl::producer<MessageToEdit> editRequests() const;
@@ -421,6 +422,7 @@ private:
 		not_null<Ui::RpWidget*> button,
 		Fn<void(Api::SendOptions)> send);
 	bool updateReplaceMediaButton();
+	void startMediaReplace();
 	void updateOuterGeometry(QRect rect);
 	void paintBackground(QPainter &p, QRect full, QRect clip);
 
@@ -431,6 +433,7 @@ private:
 	[[nodiscard]] SendMenu::Details sendMenuDetails() const;
 	[[nodiscard]] SendMenu::Details saveMenuDetails() const;
 	[[nodiscard]] SendMenu::Details sendButtonMenuDetails() const;
+	[[nodiscard]] bool canReplyToForward() const;
 	[[nodiscard]] Api::SendOptions adjustedSupportSendOptions(
 		Qt::KeyboardModifiers modifiers) const;
 
@@ -636,6 +639,7 @@ private:
 	const Fn<void(not_null<DocumentData*>)> _unavailableEmojiPasted;
 
 	rpl::event_stream<Api::SendOptions> _sendCustomRequests;
+	rpl::event_stream<> _replyToForwardRequests;
 	rpl::event_stream<Qt::KeyboardModifiers> _fieldSubmits;
 	rpl::event_stream<Api::SendOptions> _scrollToMaxRequests;
 	rpl::event_stream<> _cancelRequests;
