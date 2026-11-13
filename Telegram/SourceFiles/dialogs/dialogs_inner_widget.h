@@ -437,7 +437,6 @@ private:
 		CachedRow &cached,
 		const Ui::PaintContext &context);
 
-	bool addBotAppRipple(QPoint origin, Fn<void()> updateCallback);
 	bool addQuickActionRipple(not_null<Row*> row, Fn<void()> updateCallback);
 
 	bool addRightButtonRipple(QPoint origin, Fn<void()> updateCallback);
@@ -694,7 +693,6 @@ private:
 	bool _pressedTopicJump = false;
 
 	RightButton *_pressedRightButtonData = nullptr;
-	bool _pressedRightButtonSponsored = false;
 	bool _selectedRightButton = false;
 	bool _pressedRightButton = false;
 
