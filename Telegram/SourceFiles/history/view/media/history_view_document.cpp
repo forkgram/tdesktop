@@ -498,16 +498,27 @@ QSize Document::countOptimalSize() {
 		const auto history = _realParent->history();
 		const auto session = &history->session();
 		const auto transcribes = &session->api().transcribes();
+		const auto &entry = transcribes->entry(_realParent);
+		if (_transcribedRound && entry.cloudflare && entry.shown
+			&& !transcribes->cloudflareFor(_realParent)) {
+			crl::on_main(this, [=] {
+				const auto &current = transcribes->entry(_realParent);
+				if (current.cloudflare && current.roundview && current.shown
+					&& !transcribes->cloudflareFor(_realParent)) {
+					transcribes->toggle(_realParent);
+				}
+			});
+		}
 		const auto media = _parent->data()->media();
 		if ((media && media->ttlSeconds())
 			|| IsHostedInstantViewMedia(_parent)
 			|| _realParent->isScheduled()
 			|| _realParent->isAdminLogEntry()
 			|| (!session->premium()
-				&& !transcribes->freeFor(_realParent)
-				&& !transcribes->trialsSupport())
-			|| (!session->premium()
-				&& _data->duration() > transcribes->trialsMaxLengthMs())) {
+				&& !transcribes->cloudflareFor(_realParent)
+				&& ((!transcribes->freeFor(_realParent)
+						&& !transcribes->trialsSupport())
+					|| _data->duration() > transcribes->trialsMaxLengthMs()))) {
 			voice->transcribe = nullptr;
 			voice->transcribeText = {};
 		} else {
