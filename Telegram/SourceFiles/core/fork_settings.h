@@ -46,6 +46,13 @@ public:
 	void setLastSeenInDialogs(bool newValue) {
 		_lastSeenInDialogs = newValue;
 	}
+	[[nodiscard]] bool coloredLastSeenDots() const {
+		return _coloredLastSeenDots;
+	}
+	[[nodiscard]] rpl::producer<> coloredLastSeenDotsChanges() const {
+		return _coloredLastSeenDotsChanges.events();
+	}
+	void setColoredLastSeenDots(bool newValue);
 	[[nodiscard]] QString searchEngineUrl() const {
 		return _searchEngineUrl;
 	}
@@ -149,6 +156,8 @@ private:
 	QString _botsPlatforms;
 	bool _archivedStoriesAreHidden = false;
 	bool _hideFromBlockedUsers = false;
+	bool _coloredLastSeenDots = true;
+	rpl::event_stream<> _coloredLastSeenDotsChanges;
 
 };
 

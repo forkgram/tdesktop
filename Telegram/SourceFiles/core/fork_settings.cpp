@@ -29,7 +29,8 @@ QByteArray ForkSettings::serialize() const {
 		+ Serialize::stringSize(_searchEngineUrl)
 		+ sizeof(qint32) * 13
 		+ sizeof(qint32) * 2
-		+ Serialize::stringSize(_botsPlatforms);
+		+ Serialize::stringSize(_botsPlatforms)
+		+ sizeof(qint32);
 
 	auto result = QByteArray();
 	result.reserve(size);
@@ -62,6 +63,7 @@ QByteArray ForkSettings::serialize() const {
 			<< _botsPlatforms
 			<< qint32(_archivedStoriesAreHidden ? 1 : 0)
 			<< qint32(_hideFromBlockedUsers ? 1 : 0)
+			<< qint32(_coloredLastSeenDots ? 1 : 0)
 			;
 	}
 	return result;
@@ -99,6 +101,7 @@ void ForkSettings::addFromSerialized(const QByteArray &serialized) {
 	qint32 additionalButtonsWebBot = _additionalButtonsWebBot;
 	qint32 archivedStoriesAreHidden = _archivedStoriesAreHidden;
 	qint32 hideFromBlockedUsers = _hideFromBlockedUsers;
+	qint32 coloredLastSeenDots = _coloredLastSeenDots;
 	QString botsPlatforms = _botsPlatforms;
 
 	if (!stream.atEnd()) {
@@ -150,6 +153,9 @@ void ForkSettings::addFromSerialized(const QByteArray &serialized) {
 	if (!stream.atEnd()) {
 		stream >> hideFromBlockedUsers;
 	}
+	if (!stream.atEnd()) {
+		stream >> coloredLastSeenDots;
+	}
 	if (stream.status() != QDataStream::Ok) {
 		LOG(("App Error: "
 			"Bad data for Core::ForkSettings::constructFromSerialized()"));
@@ -181,6 +187,7 @@ void ForkSettings::addFromSerialized(const QByteArray &serialized) {
 	_additionalButtonsWebBot = (additionalButtonsWebBot == 1);
 	_archivedStoriesAreHidden = (archivedStoriesAreHidden == 1);
 	setHideFromBlockedUsers(hideFromBlockedUsers == 1);
+	_coloredLastSeenDots = (coloredLastSeenDots == 1);
 	_botsPlatforms = std::move(botsPlatforms);
 }
 
@@ -207,6 +214,15 @@ void ForkSettings::resetOnLastLogout() {
 	_archivedStoriesAreHidden = false;
 	setHideFromBlockedUsers(false);
 	_botsPlatforms = QString();
+	_coloredLastSeenDots = true;
+}
+
+void ForkSettings::setColoredLastSeenDots(bool newValue) {
+	if (_coloredLastSeenDots == newValue) {
+		return;
+	}
+	_coloredLastSeenDots = newValue;
+	_coloredLastSeenDotsChanges.fire({});
 }
 
 [[nodiscard]] bool ForkSettings::addToMenuRememberMedia() const {
