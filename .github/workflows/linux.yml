@@ -72,45 +72,13 @@ jobs:
       UPLOAD_ARTIFACT: "true"
       ONLY_CACHE: "false"
       IMAGE_TAG: tdesktop:centos_env
+      LEGACY_UPDATE: ${{ (github.event_name == 'release' || github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch') && 'true' || 'false' }}
 
     steps:
-      - name: Validate upload secret parts.
-        env:
-          UPDATER_UPLOAD_BASE64: ${{ secrets.UPDATER_UPLOAD_BASE64 }}
-          UPDATER_UPLOAD_BASE64_PART1: ${{ secrets.UPDATER_UPLOAD_BASE64_PART1 }}
-          UPDATER_UPLOAD_BASE64_PART2: ${{ secrets.UPDATER_UPLOAD_BASE64_PART2 }}
-          UPDATER_UPLOAD_BASE64_PART3: ${{ secrets.UPDATER_UPLOAD_BASE64_PART3 }}
-        run: |
-          echo "UPDATER_UPLOAD_BASE64 length: ${#UPDATER_UPLOAD_BASE64}"
-          echo "UPDATER_UPLOAD_BASE64_PART1 length: ${#UPDATER_UPLOAD_BASE64_PART1}"
-          echo "UPDATER_UPLOAD_BASE64_PART2 length: ${#UPDATER_UPLOAD_BASE64_PART2}"
-          echo "UPDATER_UPLOAD_BASE64_PART3 length: ${#UPDATER_UPLOAD_BASE64_PART3}"
-          MERGED_UPLOAD_BASE64="${UPDATER_UPLOAD_BASE64_PART1}${UPDATER_UPLOAD_BASE64_PART2}${UPDATER_UPLOAD_BASE64_PART3}"
-          if [ -z "${MERGED_UPLOAD_BASE64}" ]; then
-            MERGED_UPLOAD_BASE64="${UPDATER_UPLOAD_BASE64}"
-          fi
-          echo "Merged parts length: ${#MERGED_UPLOAD_BASE64}"
-          if [ -z "${MERGED_UPLOAD_BASE64}" ]; then
-            echo "No upload base64 payload provided."
-            exit 0
-          fi
-
-          if ! printf "%s" "${MERGED_UPLOAD_BASE64}" | base64 --decode > /tmp/updater_upload_check.zip 2>/tmp/updater_upload_check.err; then
-            echo "Base64 decode failed."
-            cat /tmp/updater_upload_check.err
-            exit 1
-          fi
-
-          if [ ! -s /tmp/updater_upload_check.zip ]; then
-            echo "Decoded payload is empty."
-            exit 1
-          fi
-
-          echo "Decoded file info: $(file -b /tmp/updater_upload_check.zip)"
-
       - name: Clone.
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           submodules: recursive
 
       - name: First set up.
@@ -128,25 +96,6 @@ jobs:
 
           sudo apt -y install wget 7zip unzip
 
-          cd $GITHUB_WORKSPACE/..
-
-          rm -rf DesktopPrivate
-          mkdir -p DesktopPrivate
-          if [ -n "${{ secrets.DESKTOP_PRIVATE_BASE64 }}" ]; then
-            echo "${{ secrets.DESKTOP_PRIVATE_BASE64 }}" | base64 --decode > desktop_private.zip
-            unzip -oq desktop_private.zip -d DesktopPrivate
-          else
-            cd DesktopPrivate
-            echo "#pragma once" > alpha_private.h
-            echo "#pragma once" > packer_private.h
-            echo '${{ secrets.ALPHA_PRIVATE }}' >> alpha_private.h
-            echo '${{ secrets.PACKER_PRIVATE }}' >> packer_private.h
-            cd ..
-          fi
-
-          wget ${{ secrets.PACK_FILE }} -O p.7z
-          7za x p.7z -p${{ secrets.PACK_FILE_PASSWORD }}
-
       - name: Free up some disk space.
         uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6
         with:
@@ -154,11 +103,11 @@ jobs:
 
       - name: Set up Docker Buildx.
         id: setup-buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Libraries cache.
         id: cache-libs
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ${{ runner.temp }}/.buildx-cache
@@ -175,7 +124,7 @@ jobs:
           skip-extraction: ${{ steps.cache-libs.outputs.cache-hit }}
 
       - name: Libraries.
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: Telegram/build/docker/centos_env
           load: ${{ env.ONLY_CACHE == 'false' }}
@@ -191,11 +140,43 @@ jobs:
       - name: Restore Telegram Desktop cache.
         id: cache-tdesktop
         if: env.ONLY_CACHE == 'false'
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ${{ runner.OS }}-tdesktop-${{ matrix.defines || 'null' }}-${{ github.run_id }}
           restore-keys: ${{ runner.OS }}-tdesktop-${{ matrix.defines || 'null' }}-
+
+      - name: Set up the Packer headers for CI.
+        if: env.LEGACY_UPDATE == 'false'
+        run: |
+          mkdir -p ../DesktopPrivate
+          printf 'const char *PrivateKey = "";\nconst char *PrivateBetaKey = "";\n' > ../DesktopPrivate/packer_private.h
+          printf '[[maybe_unused]] static const char *AlphaPrivateKey = "";\n' > ../DesktopPrivate/alpha_private.h
+
+      - name: Set up the legacy signing files.
+        if: env.LEGACY_UPDATE == 'true'
+        env:
+          DESKTOP_PRIVATE_BASE64: ${{ secrets.DESKTOP_PRIVATE_BASE64 }}
+          ALPHA_PRIVATE: ${{ secrets.ALPHA_PRIVATE }}
+          PACKER_PRIVATE: ${{ secrets.PACKER_PRIVATE }}
+          PACK_FILE: ${{ secrets.PACK_FILE }}
+          PACK_FILE_PASSWORD: ${{ secrets.PACK_FILE_PASSWORD }}
+        run: |
+          umask 077
+          cd "$GITHUB_WORKSPACE/.."
+          mkdir -p DesktopPrivate
+          if [ -n "$DESKTOP_PRIVATE_BASE64" ]; then
+            printf '%s' "$DESKTOP_PRIVATE_BASE64" | base64 --decode > desktop_private.zip
+            unzip -oq desktop_private.zip -d DesktopPrivate
+            rm desktop_private.zip
+          else
+            printf '#pragma once\n%s\n' "$ALPHA_PRIVATE" > DesktopPrivate/alpha_private.h
+            printf '#pragma once\n%s\n' "$PACKER_PRIVATE" > DesktopPrivate/packer_private.h
+          fi
+
+          wget "$PACK_FILE" -O p.7z
+          7za x p.7z -p"$PACK_FILE_PASSWORD"
+          rm p.7z
 
       - name: Telegram Desktop build.
         if: env.ONLY_CACHE == 'false'
@@ -210,13 +191,19 @@ jobs:
           fi
 
           ccache -z
+          cache_options=()
+          if [ "$LEGACY_UPDATE" == "true" ]; then
+            cache_options=(-e CCACHE_DISABLE=1)
+          fi
 
           docker run --rm \
           -u $(id -u) \
-          -v $PWD:/usr/src/tdesktop \
+          -v "$PWD":/usr/src/tdesktop \
+          -v "$PWD/../DesktopPrivate":/usr/src/DesktopPrivate:ro \
           -v ${{ env.CCACHE_DIR }}:/var/cache/ccache \
           -e CONFIG=Debug \
           -e CCACHE_SLOPPINESS=pch_defines,time_macros \
+          "${cache_options[@]}" \
           $IMAGE_TAG \
           /usr/src/tdesktop/Telegram/build/docker/centos_env/build.sh \
           -D TDESKTOP_API_ID=${{ secrets.API_ID }} \
@@ -245,7 +232,7 @@ jobs:
           env.ONLY_CACHE == 'false'
             && github.ref_name == github.event.repository.default_branch
             && fromJSON(steps.ccache-stats.outputs.misses) > 300
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ${{ steps.cache-tdesktop.outputs.cache-primary-key }}
@@ -269,7 +256,7 @@ jobs:
         run: tar -cJvf Forkgram.tar.xz -C out/MinSizeRel Forkgram Updater
 
       - name: Pack updater files.
-        if: (github.event_name == 'release') || (github.event_name == 'workflow_dispatch') || (github.event_name == 'repository_dispatch')
+        if: env.LEGACY_UPDATE == 'true'
         run: |
           verPacker=$(awk '$1 == "AppVersion" { print $2 }' Telegram/build/version)
           cd out/MinSizeRel
@@ -290,8 +277,26 @@ jobs:
           echo "PACKED_UPDATE_BASENAME=$UPDATE_FILE" >> $GITHUB_ENV
           echo "VER_PACKER=$verPacker" >> $GITHUB_ENV
 
+      - name: Remove the legacy signing files.
+        if: always() && env.LEGACY_UPDATE == 'true'
+        run: rm -rf -- ../DesktopPrivate out/MinSizeRel/Packer
+
+      - name: Set up Python for the legacy uploader.
+        if: env.LEGACY_UPDATE == 'true'
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+
+      - name: Install the legacy uploader dependencies.
+        if: env.LEGACY_UPDATE == 'true'
+        run: |
+          python -m venv "$RUNNER_TEMP/telegram-venv"
+          python="$RUNNER_TEMP/telegram-venv/bin/python"
+          "$python" -m pip install --require-hashes -r .github/scripts/requirements-python-build.txt
+          "$python" -m pip install --require-hashes --no-build-isolation -r .github/scripts/requirements-legacy-uploader.txt
+
       - name: Upload packed updater to Telegram channel.
-        if: (github.event_name == 'release') || (github.event_name == 'workflow_dispatch') || (github.event_name == 'repository_dispatch')
+        if: env.LEGACY_UPDATE == 'true'
         env:
           UPDATER_UPLOAD_BASE64: ${{ secrets.UPDATER_UPLOAD_BASE64 }}
           UPDATER_UPLOAD_BASE64_PART1: ${{ secrets.UPDATER_UPLOAD_BASE64_PART1 }}
@@ -307,9 +312,6 @@ jobs:
             echo "UPDATER_UPLOAD_BASE64(_PART1/_PART2/_PART3) is empty, skip channel upload."
             exit 0
           fi
-
-          python3 -m pip install --upgrade pip
-          python3 -m pip install requests tgcrypto-pyrofork Kurigram
 
           rm -rf updater_channel_upload
           mkdir -p updater_channel_upload
@@ -342,14 +344,11 @@ jobs:
           cp updater_upload.zip "$SCRIPT_DIR/"
 
           cd "$SCRIPT_DIR"
-          if [ -f requirements.txt ]; then
-            python3 -m pip install -r requirements.txt
-          fi
-          python3 linux_pack_upl.py "tlinuxupd${VER_PACKER}"
+          "$RUNNER_TEMP/telegram-venv/bin/python" linux_pack_upl.py "tlinuxupd${VER_PACKER}"
 
       - name: Upload.
         if: (github.event_name == 'release')
-        uses: svenstaro/upload-release-action@2.11.4
+        uses: svenstaro/upload-release-action@b98a3b12e86552593f3e4e577ca8a62aa2f3f22b # 2.11.4
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: ./Forkgram.tar.xz

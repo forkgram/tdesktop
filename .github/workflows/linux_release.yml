@@ -25,7 +25,7 @@ on:
     - cron: '0 5 * * 1,4'
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: linux-release-${{ github.ref }}
@@ -44,12 +44,12 @@ jobs:
       UPD_PREFIX: td-update-linux-x64-
       ASSET_PORTABLE: Forkgram.tar.xz
       ONLY_CACHE: ${{ (github.event_name == 'schedule' || inputs.only_cache) && 'true' || 'false' }}
-      PUBLISH_RELEASE: ${{ (inputs.publish_release || startsWith(github.ref, 'refs/tags/')) && 'true' || 'false' }}
 
     steps:
       - name: Clone.
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           submodules: recursive
 
       - name: Read version.
@@ -74,52 +74,6 @@ jobs:
             echo "UPD_SUFFIX=" >> $GITHUB_ENV
           fi
           echo "Building version $AppVersionStr ($AppVersion)."
-
-      - name: Set up DesktopPrivate.
-        if: env.ONLY_CACHE == 'false'
-        env:
-          API_ID: ${{ secrets.TDESKTOP_API_ID }}
-          API_HASH: ${{ secrets.TDESKTOP_API_HASH }}
-          PACKER_KEY: ${{ secrets.PACKER_PRIVATE_KEY }}
-          PACKER_BETA_KEY: ${{ secrets.PACKER_PRIVATE_BETA_KEY }}
-          ALPHA_KEY: ${{ secrets.ALPHA_PRIVATE_KEY }}
-          UPDATE_LOCAL_KEY: ${{ secrets.UPDATE_LOCAL_KEY }}
-        run: |
-          set -e
-          python3 - <<'PY'
-          import os, pathlib
-
-          private = pathlib.Path(os.environ['GITHUB_WORKSPACE']).parent / 'DesktopPrivate'
-          private.mkdir(parents=True, exist_ok=True)
-
-          def literal(name, pem, static=False):
-              lines = [l.strip() for l in pem.strip().splitlines() if l.strip()]
-              body = ''.join(l + '\\n\\\n' for l in lines[:-1]) + lines[-1] + '\\\n'
-              prefix = '[[maybe_unused]] static ' if static else ''
-              return '%sconst char *%s = "\\\n%s";\n' % (prefix, name, body)
-
-          # configure.py only regex-scans this one for the API credentials.
-          (private / 'custom_api_id.h').write_text(
-              'static const int32 ApiId = %s;\n'
-              'static const char *ApiHash = "%s";\n'
-              % (os.environ['API_ID'], os.environ['API_HASH']))
-
-          # packer.cpp declares both of these extern, so they must be defined here.
-          (private / 'packer_private.h').write_text(
-              literal('PrivateKey', os.environ['PACKER_KEY'])
-              + '\n'
-              + literal('PrivateBetaKey', os.environ['PACKER_BETA_KEY']))
-
-          # packer.cpp's only use of this is commented out, and -Werror rejects an unused static.
-          (private / 'alpha_private.h').write_text(
-              literal('AlphaPrivateKey', os.environ['ALPHA_KEY'], static=True))
-
-          # The v2 release key, passed to Packer as a file path, not compiled in.
-          (private / 'forkgram-release-2026a.pem').write_text(
-              os.environ['UPDATE_LOCAL_KEY'].strip() + '\n')
-          PY
-
-          ls -l $GITHUB_WORKSPACE/../DesktopPrivate
 
       - name: Free up some disk space.
         uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be
@@ -148,11 +102,11 @@ jobs:
 
       - name: Set up Docker Buildx.
         id: setup-buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Libraries cache.
         id: cache-libs
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ${{ runner.temp }}/.buildx-cache
@@ -170,7 +124,7 @@ jobs:
           skip-extraction: ${{ steps.cache-libs.outputs.cache-hit }}
 
       - name: Libraries.
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: Telegram/build/docker/centos_env
           load: ${{ env.ONLY_CACHE == 'false' }}
@@ -183,6 +137,34 @@ jobs:
           rm -rf ${{ runner.temp }}/.buildx-cache
           mv ${{ runner.temp }}/.buildx-cache{-new,}
 
+      - name: Set up DesktopPrivate.
+        if: env.ONLY_CACHE == 'false'
+        env:
+          API_ID: ${{ secrets.TDESKTOP_API_ID }}
+          API_HASH: ${{ secrets.TDESKTOP_API_HASH }}
+        run: |
+          set -e
+          python3 - <<'PY'
+          import os, pathlib
+
+          private = pathlib.Path(os.environ['GITHUB_WORKSPACE']).parent / 'DesktopPrivate'
+          private.mkdir(parents=True, exist_ok=True)
+
+          # configure.py only regex-scans this one for the API credentials.
+          (private / 'custom_api_id.h').write_text(
+              'static const int32 ApiId = %s;\n'
+              'static const char *ApiHash = "%s";\n'
+              % (os.environ['API_ID'], os.environ['API_HASH']))
+
+          (private / 'packer_private.h').write_text(
+              'const char *PrivateKey = "";\n'
+              'const char *PrivateBetaKey = "";\n')
+          (private / 'alpha_private.h').write_text(
+              '[[maybe_unused]] static const char *AlphaPrivateKey = "";\n')
+          PY
+
+          ls -l $GITHUB_WORKSPACE/../DesktopPrivate
+
       - name: Telegram Desktop build.
         if: env.ONLY_CACHE == 'false'
         run: |
@@ -190,7 +172,7 @@ jobs:
           docker run --rm \
             -u $(id -u) \
             -v $PWD:/usr/src/tdesktop \
-            -v $PWD/../DesktopPrivate:/usr/src/DesktopPrivate \
+            -v $PWD/../DesktopPrivate:/usr/src/DesktopPrivate:ro \
             -e CONFIG=$BUILD_CONFIG \
             $IMAGE_TAG \
             /usr/src/tdesktop/Telegram/build/docker/centos_env/build.sh \
@@ -228,10 +210,9 @@ jobs:
           ./Packer -path Forkgram -path Updater -version "$AppVersion" \
             -channel "$UPD_CHANNEL" \
             -keys-loc "$GITHUB_WORKSPACE/Telegram/Resources/update" \
-            -local-key "$GITHUB_WORKSPACE/../DesktopPrivate/forkgram-release-2026a.pem" \
-            -local-key-id fg-2026a
+            -emit-signing-input update-signing-input.bin
 
-          update="${UPD_PREFIX}${AppVersion}${UPD_SUFFIX}"
+          update="${UPD_PREFIX}${AppVersion}${UPD_SUFFIX}.unsigned"
           if [ ! -f "$update" ]; then
             echo "Packed update file $update was not produced."
             exit 1
@@ -248,19 +229,81 @@ jobs:
           tar -cJf "deploy/$ASSET_PORTABLE" -C "$release" Forkgram Updater
 
           # The update file keeps its raw name: the Telegram job derives the platform from it.
-          cp "$release/${UPD_PREFIX}${AppVersion}${UPD_SUFFIX}" deploy/
+          cp "$release/${UPD_PREFIX}${AppVersion}${UPD_SUFFIX}.unsigned" deploy/
 
           ls -l deploy
 
-      - uses: actions/upload-artifact@v7
-        name: Upload the artifacts.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        name: Upload the unsigned artifacts.
         if: env.ONLY_CACHE == 'false'
+        with:
+          name: unsigned-linux
+          path: deploy/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+          overwrite: true
+
+  sign-release:
+    name: Sign the Linux update
+    needs: linux-release
+    if: github.event_name != 'schedule' && !inputs.only_cache
+    runs-on: ubuntu-latest
+    environment: desktop-update-signing
+    permissions:
+      contents: write
+
+    env:
+      ASSET_PORTABLE: Forkgram.tar.xz
+
+    steps:
+      - name: Check out the release signing tools.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            Telegram/build/sign_forkgram_update.py
+            Telegram/build/version
+            Telegram/Resources/update
+          sparse-checkout-cone-mode: false
+
+      - name: Download the unsigned release.
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: unsigned-linux
+          path: deploy
+
+      - name: Read artifact version.
+        run: |
+          awk '
+            $1 == "AppVersionStr" { version = $2 }
+            $1 == "AlphaVersion" { alpha = $2 }
+            $1 == "BetaChannel" { beta = $2 }
+            END {
+              print "AppVersionStr=" version
+              print "BetaChannel=" beta
+              print "AppVersionStrFull=" version (alpha != "0" ? "_" alpha : (beta != "0" ? ".beta" : ""))
+            }
+          ' Telegram/build/version >> "$GITHUB_ENV"
+
+      - name: Sign the update file.
+        env:
+          UPDATE_LOCAL_KEY: ${{ secrets.UPDATE_LOCAL_KEY }}
+        run: >-
+          python3 -I Telegram/build/sign_forkgram_update.py deploy Telegram/build/version
+          Telegram/Resources/update linux-x64
+
+      - name: Upload the artifacts.
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: Telegram Linux Release ${{ env.AppVersionStrFull }}
           path: deploy/
+          if-no-files-found: error
+          compression-level: 0
+          overwrite: true
 
       - name: Publish the release.
-        if: env.ONLY_CACHE == 'false' && env.PUBLISH_RELEASE == 'true'
+        if: inputs.publish_release || startsWith(github.ref, 'refs/tags/')
         env:
           # A fork refuses release creation even with contents: write, so it needs a
           # RELEASE_TOKEN (repo scope) - which is why publish_release defaults to off.
@@ -294,10 +337,10 @@ jobs:
 
   publish-telegram:
     name: Publish update files to Telegram
-    needs: linux-release
+    needs: sign-release
     runs-on: ubuntu-latest
     if: >-
-      needs.linux-release.result == 'success' &&
+      needs.sign-release.result == 'success' &&
       (startsWith(github.ref, 'refs/tags/') ||
        (github.event_name == 'workflow_dispatch' && inputs.telegram != 'off'))
     environment: telegram-publish
@@ -308,27 +351,35 @@ jobs:
       cancel-in-progress: false
     steps:
       - name: Clone the uploader script.
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           sparse-checkout: |
             .github/scripts/publish_telegram.py
+            .github/scripts/requirements-telethon.txt
+            .github/scripts/requirements-python-build.txt
             .github/data/logo_256_square.png
           sparse-checkout-cone-mode: false
 
       # Filtered: unfiltered this also pulls build-push-action's .dockerbuild
       # record, which fails to extract and takes the job down with it.
       - name: Download build artifacts.
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           pattern: Telegram Linux Release *
           path: artifacts
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
 
       - name: Install Telethon.
-        run: pip install telethon
+        run: |
+          python -m venv "$RUNNER_TEMP/telegram-venv"
+          python="$RUNNER_TEMP/telegram-venv/bin/python"
+          "$python" -m pip install --require-hashes -r .github/scripts/requirements-python-build.txt
+          "$python" -m pip install --require-hashes --no-build-isolation -r .github/scripts/requirements-telethon.txt
+          echo "$RUNNER_TEMP/telegram-venv/bin" >> "$GITHUB_PATH"
 
       - name: Publish.
         env:

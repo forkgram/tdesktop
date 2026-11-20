@@ -36,10 +36,13 @@ jobs:
 
     steps:
       - name: Clone the uploader script.
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           sparse-checkout: |
             .github/scripts/publish_channel.py
+            .github/scripts/requirements-telethon.txt
+            .github/scripts/requirements-python-build.txt
             .github/data/logo_256_square.png
           sparse-checkout-cone-mode: false
 
@@ -81,12 +84,17 @@ jobs:
           echo "ASSET_VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "ASSET_BETA=$BETA" >> "$GITHUB_ENV"
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
 
       - name: Install Telethon.
-        run: pip install telethon
+        run: |
+          python -m venv "$RUNNER_TEMP/telegram-venv"
+          python="$RUNNER_TEMP/telegram-venv/bin/python"
+          "$python" -m pip install --require-hashes -r .github/scripts/requirements-python-build.txt
+          "$python" -m pip install --require-hashes --no-build-isolation -r .github/scripts/requirements-telethon.txt
+          echo "$RUNNER_TEMP/telegram-venv/bin" >> "$GITHUB_PATH"
 
       - name: Publish.
         env:
