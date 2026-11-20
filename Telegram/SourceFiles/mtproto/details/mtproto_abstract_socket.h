@@ -62,9 +62,6 @@ public:
 	[[nodiscard]] virtual QString debugPostfix() const = 0;
 
 protected:
-	static const int kFilesSendBufferSize = 2 * 1024 * 1024;
-	static const int kFilesReceiveBufferSize = 2 * 1024 * 1024;
-
 	void logError(int errorCode, const QString &errorText);
 
 	QString _debugId;

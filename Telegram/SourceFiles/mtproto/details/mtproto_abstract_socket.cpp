@@ -26,13 +26,9 @@ std::unique_ptr<AbstractSocket> AbstractSocket::Create(
 			protocolForFiles,
 			webSocketPath);
 	} else if (secret.size() >= 21 && secret[0] == bytes::type(0xEE)) {
-		return std::make_unique<TlsSocket>(
-			thread,
-			secret,
-			proxy,
-			protocolForFiles);
+		return std::make_unique<TlsSocket>(thread, secret, proxy);
 	} else {
-		return std::make_unique<TcpSocket>(thread, proxy, protocolForFiles);
+		return std::make_unique<TcpSocket>(thread, proxy);
 	}
 }
 

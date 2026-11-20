@@ -3365,14 +3365,14 @@ void ComposeControls::initField() {
 		updateExpandButtonVisibility();
 		updateSendLockBadge();
 	}, _wrap->lifetime());
-#ifdef Q_OS_MAC
+#ifdef Q_OS_MACOS
 	// Removed an ability to insert text from the menu bar
 	// when the field is hidden.
 	_field->shownValue(
 	) | rpl::on_next([=](bool shown) {
 		_field->setEnabled(shown);
 	}, _field->lifetime());
-#endif // Q_OS_MAC
+#endif // Q_OS_MACOS
 	_chatStyle = InitMessageField(_show, _field, [=](not_null<DocumentData*> emoji) {
 		if (_history
 			&& Data::AllowEmojiWithoutPremium(_history->peer, emoji)) {
@@ -4932,6 +4932,15 @@ void ComposeControls::setSendAsFileConfirmed(
 	_sendAsFileConfirmed = std::move(confirmed);
 }
 
+void ComposeControls::closeSendAsFileBox(bool restoreText) {
+	if (const auto box = _sendAsFileBox.data()) {
+		if (!restoreText) {
+			box->setCancelledCallback(nullptr);
+		}
+		box->closeBox();
+	}
+}
+
 void ComposeControls::fireSendTextAsFile(
 		const QString &fileText,
 		Fn<void()> restoreText) {
@@ -4954,7 +4963,7 @@ void ComposeControls::fireSendTextAsFile(
 		}
 		callback(std::move(bundle), options);
 	};
-	_show->show(Box<SendFilesBox>(SendFilesBoxDescriptor{
+	auto box = Box<SendFilesBox>(SendFilesBoxDescriptor{
 		.show = _show,
 		.list = Ui::PrepareTextAsFile(fileText),
 		.caption = TextWithTags{},
@@ -4967,7 +4976,9 @@ void ComposeControls::fireSendTextAsFile(
 		.confirmed = std::move(confirmed),
 		.cancelled = std::move(restoreText),
 		.replyTo = replyingToMessage(),
-	}));
+	});
+	_sendAsFileBox = box.data();
+	_show->show(std::move(box));
 }
 
 bool ComposeControls::checkLargeTextPaste(
@@ -6024,18 +6035,23 @@ void ComposeControls::editMessage(
 	} else if (Iv::Editor::ActivateEditWindowFor(_session, id)) {
 		return;
 	}
-	editMessage(item);
+	const auto editData = PrepareEditText(item);
+	editMessage(item, editData);
 	if (_header->editMsgId() != id) {
 		return;
 	}
 	if (!item->richPage()) {
-		SelectTextInFieldWithMargins(_field, selection);
+		SelectTextInFieldWithMargins(
+			_field,
+			EditFieldSelection(editData, selection));
 	}
 	saveDraftWithTextNow();
 	focus();
 }
 
-void ComposeControls::editMessage(not_null<HistoryItem*> item) {
+void ComposeControls::editMessage(
+		not_null<HistoryItem*> item,
+		const TextWithTags &editData) {
 	Expects(_history != nullptr);
 
 	if (draftKey(DraftType::Edit) == Data::DraftKey::None()) {
@@ -6062,10 +6078,11 @@ void ComposeControls::editMessage(not_null<HistoryItem*> item) {
 	if (!isEditingMessage()) {
 		saveFieldToHistoryLocalDraft();
 	}
-	const auto editData = PrepareEditText(item);
+	const auto length = uint16(editData.text.size());
+	const auto position = EditFieldSelection(editData, { length, length }).from;
 	const auto cursor = MessageCursor{
-		int(editData.text.size()),
-		int(editData.text.size()),
+		position,
+		position,
 		Ui::kQFixedMax
 	};
 	const auto key = draftKey(DraftType::Edit);

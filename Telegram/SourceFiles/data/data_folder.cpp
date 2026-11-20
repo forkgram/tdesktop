@@ -26,7 +26,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session.h"
 #include "mtproto/mtproto_config.h"
 #include "apiwrap.h"
-#include "mainwidget.h"
 #include "styles/style_dialogs.h"
 
 namespace Data {

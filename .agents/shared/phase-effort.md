@@ -10,7 +10,7 @@ evidence loop; it does not create extra delegation or change phase ownership.
 | Work | Effort |
 | --- | --- |
 | Routine scheduler bookkeeping, helper-driven setup/publication, running already specified build or test commands, collecting artifacts, and mechanical text normalization | `medium`, only while no design, diagnosis, source repair, or verdict is needed |
-| Context and planning, visual design, independent assessment, implementation, all review lenses and synthesis, fixes, evidence design/authoring/assessment, failure diagnosis, and convergence or rescoping | Default to `xhigh` |
+| Context and planning, visual design, independent assessment, implementation, all review lenses and synthesis, fixes, evidence design/authoring/assessment, failure diagnosis, requirement checks, and convergence or rescoping | Default to `xhigh` |
 | Inbox planning, split/discovery routing, pending-task consolidation, and a stateful performer that owns the whole implementation/evidence campaign | Default to `xhigh` |
 
 Use `high` instead of `xhigh` only when the parent is sure there is nothing
@@ -35,29 +35,33 @@ The parent selects `xhigh`, or justified `high`, for that follow-up and resumes
 the existing validation/review contract. Likewise, unexpected complexity in a
 `high` phase calls for `xhigh`. Preserve completed artifacts and checks.
 
-## Lens models
+## Review models
 
-On a Codex model, the **reuse**, **structure** and **performance** lens
-reviewers run on `gpt-6.1-sol` in every round, at their selected effort. The
-general reviewer and synthesis, the lifetime and security lenses, and every
-other phase keep the configured model. Over 727 reviewed tasks those three
-lenses rarely found an accepted issue no other reviewer raised, and none of
-those was a crash, lifetime or security defect; lifetime and security did
-catch such defects alone. When the pinned model is unavailable, run the lens
-on the configured model and record that in the phase result `NOTES:`.
+On a Codex model, every review and assessment leaf runs on a pinned model in
+every round, at its selected effort. The **reuse**, **structure** and
+**performance** lens reviewers run on `gpt-6.2-sol`. Every other review and
+assessment leaf runs on `gpt-6.2-astra`: the plan assessment, the general
+reviewer and synthesis, the lifetime and security lenses, named specialists,
+focused re-reviews, the requirement checks, and the convergence,
+campaign-cap and evidence assessments. All other phases keep the configured
+model. Over 727 reviewed tasks those three lenses rarely found an accepted
+issue no other reviewer raised, and none of those was a crash, lifetime or
+security defect; lifetime and security did catch such defects alone. When a
+pinned model is unavailable, run the leaf on the configured model and record
+that in the phase result `NOTES:`.
 
 A harness task (perform-task pipeline, "Harness tasks") changes code no user
 runs, so on a Codex model all of its review and assessment leaves run on
-`gpt-6.1-sol`: the plan assessment, the general review and synthesis, every
-lens, the convergence assessments and the evidence assessments. Its other
-phases keep the configured model.
+`gpt-6.2-sol`: the plan assessment, the general review and synthesis, every
+lens, the requirement checks, the convergence assessments and the evidence
+assessments. Its other phases keep the configured model.
 
 ## Apply on the current host
 
 - **Codex:** When the exposed spawn schema supports it, pass
   `reasoning_effort: "medium"`, `"high"`, or `"xhigh"` as selected above.
   Omit `model` to retain the parent model, except where
-  [lens models](#lens-models) pin one. Use `fork_turns: "none"` or the
+  [review models](#review-models) pin one. Use `fork_turns: "none"` or the
   smallest necessary positive turn window; a full-history fork cannot carry
   these overrides. Put required context and exact paths in the prompt.
 - **Claude Code:** For an assignment classified as `medium` or justified
@@ -70,7 +74,7 @@ phases keep the configured model.
 - **Codex CLI leaves started from another host:** Pass the selected effort as
   `codex_leaf.py start --effort`, per
   [Codex CLI leaves](codex-cli-leaves.md). Pass `--model` only where
-  [lens models](#lens-models) pin one; otherwise the leaf uses the user's
+  [review models](#review-models) pin one; otherwise the leaf uses the user's
   configured Codex model.
 - **Grok Build:** Keep the adapter's inherited model and effort; do not invent
   unsupported effort arguments.

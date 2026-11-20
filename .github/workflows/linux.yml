@@ -18,6 +18,7 @@ on:
       - private-canary
       - 'private-ci/**'
       - 'private-ci-*'
+      - 'win7-gate-*'
     paths-ignore:
       - 'docs/**'
       - '**.md'

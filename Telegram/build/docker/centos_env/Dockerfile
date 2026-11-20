@@ -95,14 +95,14 @@ cd build
 implib() {
 	LIBFILE=$(basename $1)
 	LIBNAME=$(basename $1 .so)
-	../implib-gen.py -q $1
+	../implib-gen.py -q "$@"
 	gcc $CFLAGS -g0 -c -o $LIBFILE.tramp.o $LIBFILE.tramp.S
 	gcc $CFLAGS -c -o $LIBFILE.init.o $LIBFILE.init.c
 	ar rcs /usr/local/lib64/$LIBNAME.a $LIBFILE.tramp.o $LIBFILE.init.o
 }
 
 implib /usr/lib64/libgtk-3.so
-implib /usr/lib64/libgdk-3.so
+implib /usr/lib64/libgdk-3.so --dlsym-callback=implib_gdk_dlsym
 implib /usr/lib64/libgdk_pixbuf-2.0.so
 implib /usr/lib64/libvdpau.so
 implib /usr/lib64/libva-x11.so
@@ -152,6 +152,29 @@ EOF2
 gcc $CFLAGS -c -o libX11.locks.o libX11.locks.c
 ar rs /usr/local/lib64/libX11.a libX11.locks.o
 
+# Qt checks the GdkWindow type of both backends, while GTK
+# may be built without one of them.
+cat > libgdk-3.dlsym.c <<'EOF2'
+#include <dlfcn.h>
+#include <string.h>
+
+static unsigned long InvalidType(void) {
+	return 0;
+}
+
+void *implib_gdk_dlsym(void *handle, const char *name) {
+	void *result = dlsym(handle, name);
+	if (!result
+		&& (!strcmp(name, "gdk_wayland_window_get_type")
+			|| !strcmp(name, "gdk_x11_window_get_type"))) {
+		return (void*)InvalidType;
+	}
+	return result;
+}
+EOF2
+gcc $CFLAGS -c -o libgdk-3.dlsym.o libgdk-3.dlsym.c
+ar rs /usr/local/lib64/libgdk-3.a libgdk-3.dlsym.o
+
 cd ../..
 rm -rf Implib.so
 EOF
@@ -161,7 +184,7 @@ RUN <<EOF
 git init patches
 cd patches
 git remote add origin https://github.com/desktop-app/patches.git
-git fetch --depth=1 origin 23d349a3ff09dbc1fa8127ce39ba9223de0edf21
+git fetch --depth=1 origin 69f23a834024d6064da209076151393582b3c966
 git reset --hard FETCH_HEAD
 rm -rf .git
 EOF
@@ -606,8 +629,11 @@ COPY --link --from=xv /usr/src/xv-cache /
 COPY --link --from=nv-codec-headers /usr/src/nv-codec-headers-cache /
 
 RUN --mount=type=cache,target=/var/cache/ccache <<EOF
-git clone -b n8.1.3 --depth=1 https://github.com/FFmpeg/FFmpeg.git
+git init FFmpeg
 cd FFmpeg
+git remote add origin https://github.com/FFmpeg/FFmpeg.git
+git fetch --depth=1 origin e22a4510c982b048945052bd6a503475014b7ba0
+git reset --hard FETCH_HEAD
 find ../patches/ffmpeg -type f -name '*.patch' -print0 | sort -z | xargs -r0 git apply
 ./configure \
 	--extra-cflags="-fno-lto -DCONFIG_SAFE_BITSTREAM_READER=1" \
@@ -872,7 +898,7 @@ COPY --link --from=openssl /usr/src/openssl-cache /
 COPY --link --from=xkbcommon /usr/src/xkbcommon-cache /
 
 RUN --mount=type=cache,target=/var/cache/ccache <<EOF
-QT=6.11.2
+QT=6.12.0
 git clone -b v$QT --depth=1 https://github.com/qt/qt5.git
 cd qt5
 git submodule update --init --recursive --depth=1 \
@@ -955,7 +981,7 @@ RUN --mount=type=cache,target=/var/cache/ccache <<EOF
 git init tg_owt
 cd tg_owt
 git remote add origin https://github.com/desktop-app/tg_owt.git
-git fetch --depth=1 origin 020feec5c040fdae2cf752c2c2be62ddde7c236d
+git fetch --depth=1 origin 642ddb107b42da7c8d152401b71cd429475e5266
 git reset --hard FETCH_HEAD
 git submodule update --init --recursive --depth=1
 cmake -B build . -DTG_OWT_DLOPEN_PIPEWIRE=ON
@@ -963,17 +989,6 @@ cmake --build build
 DESTDIR=/usr/src/webrtc-cache cmake --install build
 cd ..
 rm -rf tg_owt
-EOF
-
-FROM builder AS ada
-RUN --mount=type=cache,target=/var/cache/ccache <<EOF
-git clone -b v3.2.9 --depth=1 https://github.com/ada-url/ada.git
-cd ada
-cmake -B build . -DADA_TESTING=OFF -DADA_TOOLS=OFF -DADA_INCLUDE_URL_PATTERN=OFF
-cmake --build build
-DESTDIR=/usr/src/ada-cache cmake --install build
-cd ..
-rm -rf ada
 EOF
 
 FROM builder AS tde2e
@@ -1083,7 +1098,6 @@ COPY --link --from=qt /usr/src/qt-cache /
 COPY --link --from=boost /usr/src/boost-cache /
 COPY --link --from=breakpad /usr/src/breakpad-cache /
 COPY --link --from=webrtc /usr/src/webrtc-cache /
-COPY --link --from=ada /usr/src/ada-cache /
 COPY --link --from=tde2e /usr/src/tde2e-cache /
 COPY --link --from=tdesktop_rust /usr/src/tdesktop_rust-cache /
 

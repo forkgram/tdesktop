@@ -386,7 +386,7 @@ private:
 	};
 	struct ScrollChange {
 		ScrollChangeType type;
-		int value;
+		int value = 0;
 	};
 	struct ChooseMessagesForReport {
 		Data::ReportInput reportInput;

@@ -35,8 +35,8 @@ This atlas divides Telegram Desktop's sources into named areas, ordered from fou
 - Turning tg:// and t.me links, deep links and clickable text entities into in-app navigation and actions. It must not own the screens those links open. Today it also builds the personal-channel picker in `local_url_handlers.cpp`; that belongs in `settings/sections` beside the account-info page.
 
 ### core/updates — self-update
-- Paths: `SourceFiles/core/update_*`, `SourceFiles/_other/updater*`, `SourceFiles/_other/packer*`, `SourceFiles/platform/linux/update_install_linux*`
-- Checking, downloading, verifying, unpacking and installing new versions per channel, the standalone Updater, the Linux protected install and the release Packer. It must not own changelogs or settings UI.
+- Paths: `SourceFiles/core/update_*`, `SourceFiles/_other/updater*`, `SourceFiles/_other/packer*`, `SourceFiles/platform/linux/update_install_linux*`, `SourceFiles/platform/mac/update_install_mac*`, `SourceFiles/platform/win/update_install_win*`
+- Checking, downloading, verifying, unpacking and installing new versions per channel, the standalone Updater, the Linux and Windows protected installs, the macOS kept-package install and the release Packer. It must not own changelogs or settings UI.
 
 ### accounts — accounts and sessions
 - Paths: `SourceFiles/main/`
@@ -95,8 +95,8 @@ This atlas divides Telegram Desktop's sources into named areas, ordered from fou
 - DC options and config, auth keys, sessions and resending, TCP, HTTP and TLS connections, proxies and checks, special-config fallback, dedicated loaders, the TL schemes and the tde2e end-to-end binding. It knows nothing about messages, peers or UI.
 
 ### storage/local — encrypted local persistence
-- Paths: `SourceFiles/storage/storage_account*`, `SourceFiles/storage/storage_domain*`, `SourceFiles/storage/localstorage*`, `SourceFiles/storage/details/`, `SourceFiles/storage/serialize_*`, `SourceFiles/storage/storage_file_lock*`
-- The tdata of accounts and the domain, the settings scheme, serializers and file locks. It must not own file transfer.
+- Paths: `SourceFiles/storage/storage_account*`, `SourceFiles/storage/storage_domain*`, `SourceFiles/storage/localstorage*`, `SourceFiles/storage/details/`, `SourceFiles/storage/serialize_*`
+- The tdata of accounts and the domain, the settings scheme and serializers. It must not own file transfer.
 
 ### storage/transfer — downloads and uploads
 - Paths: `SourceFiles/storage/`, `SourceFiles/ui/image/image_location*`

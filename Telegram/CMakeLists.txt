@@ -110,7 +110,6 @@ PRIVATE
     desktop-app::lib_webview
     desktop-app::lib_ffmpeg
     desktop-app::lib_stripe
-    desktop-app::external_ada
     desktop-app::external_zlib
     desktop-app::external_minizip
     desktop-app::external_kcoreaddons
@@ -145,6 +144,8 @@ PRIVATE
     api/api_blocked_peers.h
     api/api_bot.cpp
     api/api_bot.h
+    api/api_bot_info.cpp
+    api/api_bot_info.h
     api/api_chat_filters.cpp
     api/api_chat_filters.h
     api/api_chat_filters_remove_manager.cpp
@@ -230,6 +231,8 @@ PRIVATE
     api/api_statistics_sender.h
     api/api_stickers_creator.cpp
     api/api_stickers_creator.h
+    api/api_stories.cpp
+    api/api_stories.h
     api/api_suggest_post.cpp
     api/api_suggest_post.h
     api/api_text_entities.cpp
@@ -270,6 +273,10 @@ PRIVATE
     boxes/peers/add_participants_box.h
     boxes/peers/add_to_community_box.cpp
     boxes/peers/add_to_community_box.h
+    boxes/peers/bot_info_emoji_panel.cpp
+    boxes/peers/bot_info_emoji_panel.h
+    boxes/peers/bot_intro_preview.cpp
+    boxes/peers/bot_intro_preview.h
     boxes/peers/channel_ownership_transfer.cpp
     boxes/peers/channel_ownership_transfer.h
     boxes/peers/choose_peer_box.cpp
@@ -280,6 +287,8 @@ PRIVATE
     boxes/peers/community_pending_requests_box.h
     boxes/peers/create_managed_bot_box.cpp
     boxes/peers/create_managed_bot_box.h
+    boxes/peers/edit_bot_info_box.cpp
+    boxes/peers/edit_bot_info_box.h
     boxes/peers/edit_contact_box.cpp
     boxes/peers/edit_contact_box.h
     boxes/peers/edit_forum_topic_box.cpp
@@ -415,8 +424,16 @@ PRIVATE
     boxes/send_files_box.h
     boxes/send_files_box_reply_header.cpp
     boxes/send_files_box_reply_header.h
+    boxes/send_story_box.cpp
+    boxes/send_story_box.h
+    boxes/send_story_row.cpp
+    boxes/send_story_row.h
     boxes/share_box.cpp
     boxes/share_box.h
+    boxes/story_drafts_box.cpp
+    boxes/story_drafts_box.h
+    boxes/story_privacy_box.cpp
+    boxes/story_privacy_box.h
     boxes/star_gift_auction_box.cpp
     boxes/star_gift_auction_box.h
     boxes/star_gift_box.cpp
@@ -780,7 +797,6 @@ PRIVATE
     data/data_media_rotation.h
     data/data_media_types.cpp
     data/data_media_types.h
-    # data/data_messages.cpp
     # data/data_messages.h
     data/data_message_reaction_id.cpp
     data/data_message_reaction_id.h
@@ -841,6 +857,10 @@ PRIVATE
     data/data_stories_ids.h
     data/data_story.cpp
     data/data_story.h
+    data/data_story_drafts.cpp
+    data/data_story_edit_sources.cpp
+    data/data_story_edit_sources.h
+    data/data_story_drafts.h
     data/data_streaming.cpp
     data/data_streaming.h
     data/data_thread.cpp
@@ -936,8 +956,8 @@ PRIVATE
     editor/controllers/stickers_panel_controller.h
     editor/editor_audio_timeline.cpp
     editor/editor_audio_timeline.h
-    editor/editor_keys_legend.cpp
-    editor/editor_keys_legend.h
+    editor/editor_caption_bar.cpp
+    editor/editor_caption_bar.h
     editor/editor_link_box.cpp
     editor/editor_link_box.h
     editor/editor_message_render.cpp
@@ -948,6 +968,10 @@ PRIVATE
     editor/editor_message_video.h
     editor/editor_paint.cpp
     editor/editor_paint.h
+    editor/editor_story_areas.cpp
+    editor/editor_story_areas.h
+    editor/editor_weather.cpp
+    editor/editor_weather.h
     editor/photo_editor.cpp
     editor/photo_editor.h
     editor/photo_editor_content.cpp
@@ -956,18 +980,16 @@ PRIVATE
     editor/photo_editor_controls.h
     editor/photo_editor_layer_widget.cpp
     editor/photo_editor_layer_widget.h
+    editor/scene/scene_draft.cpp
+    editor/scene/scene_draft.h
     editor/scene/scene_item_message.cpp
     editor/scene/scene_item_message.h
+    editor/scene/scene_item_reaction.cpp
+    editor/scene/scene_item_reaction.h
     editor/scene/scene_item_sticker.cpp
     editor/scene/scene_item_sticker.h
-    editor/scene/scene_item_video.cpp
-    editor/scene/scene_item_video.h
-    editor/video/video_clip.cpp
-    editor/video/video_clip.h
     editor/video/video_editor.cpp
     editor/video/video_editor.h
-    editor/video/video_editor_common.cpp
-    editor/video/video_editor_common.h
     editor/video/video_editor_layer.cpp
     editor/video/video_editor_layer.h
     editor/video/video_editor_quality.cpp
@@ -986,6 +1008,8 @@ PRIVATE
     export/export_manager.h
     export/view/export_view_content.cpp
     export/view/export_view_content.h
+    export/view/export_view_format_button.cpp
+    export/view/export_view_format_button.h
     export/view/export_view_panel_controller.cpp
     export/view/export_view_panel_controller.h
     export/view/export_view_progress.cpp
@@ -1233,6 +1257,8 @@ PRIVATE
     history/view/history_view_self_forwards_tagger.h
     history/view/history_view_send_action.cpp
     history/view/history_view_send_action.h
+    history/view/history_view_selection_modifier.cpp
+    history/view/history_view_selection_modifier.h
     history/view/history_view_service_message.cpp
     history/view/history_view_service_message.h
     history/view/history_view_sponsored_click_handler.cpp
@@ -1404,8 +1430,6 @@ PRIVATE
     info/profile/info_profile_qr_gifts.h
     info/profile/info_profile_qr_link.cpp
     info/profile/info_profile_qr_link.h
-    info/profile/info_profile_section_stack.cpp
-    info/profile/info_profile_section_stack.h
     info/profile/info_profile_share_theme.cpp
     info/profile/info_profile_share_theme.h
     info/profile/info_profile_shared_media_classic.cpp
@@ -1637,6 +1661,8 @@ PRIVATE
     media/stories/media_stories_delegate.h
     media/stories/media_stories_header.cpp
     media/stories/media_stories_header.h
+    media/stories/media_stories_post.cpp
+    media/stories/media_stories_post.h
     media/stories/media_stories_reactions.cpp
     media/stories/media_stories_reactions.h
     media/stories/media_stories_recent_views.cpp
@@ -1682,8 +1708,6 @@ PRIVATE
     media/streaming/media_streaming_video_track.cpp
     media/streaming/media_streaming_video_track.h
     media/streaming/media_streaming_native_frame_mac.h
-    media/media_video_encode.cpp
-    media/media_video_encode.h
     media/media_video_frames.cpp
     media/media_video_frames.h
     media/view/media_view_group_thumbs.cpp
@@ -1862,6 +1886,8 @@ PRIVATE
     platform/mac/specific_mac.h
     platform/mac/specific_mac_p.mm
     platform/mac/specific_mac_p.h
+    platform/mac/update_install_mac.mm
+    platform/mac/update_install_mac.h
     platform/mac/translate_provider_mac.h
     platform/mac/translate_provider_mac.mm
     platform/mac/tray_mac.h
@@ -1907,6 +1933,8 @@ PRIVATE
     platform/win/translate_provider_win.h
     platform/win/tray_win.cpp
     platform/win/tray_win.h
+    platform/win/update_install_win.cpp
+    platform/win/update_install_win.h
     platform/win/wallet_protection_win.cpp
     platform/win/wallet_protection_win.h
     platform/win/webauthn_win.cpp
@@ -2143,6 +2171,8 @@ PRIVATE
     test/test_custom_emoji.h
     test/test_expiry_window.cpp
     test/test_expiry_window.h
+    test/test_field_submit.cpp
+    test/test_field_submit.h
     test/test_fixture_fence.cpp
     test/test_fixture_fence.h
     test/test_fixture_transaction.cpp
@@ -2159,6 +2189,8 @@ PRIVATE
     test/test_hover.h
     test/test_ink.cpp
     test/test_ink.h
+    test/test_keyboard_modifiers.cpp
+    test/test_keyboard_modifiers.h
     test/test_l10n_seams.cpp
     test/test_l10n_seams.h
     test/test_lang_ids_migration.cpp
@@ -2202,6 +2234,7 @@ PRIVATE
     test/test_publication_identity_scan_self_test.cpp
     test/test_qpa_mouse.cpp
     test/test_qpa_mouse.h
+    test/test_qpa_mouse_held_self_test.cpp
     test/test_qpa_mouse_self_test.cpp
     test/test_queued_drag.cpp
     test/test_queued_drag.h
@@ -2593,6 +2626,8 @@ PRIVATE
     window/window_history_hider.h
     window/window_lock_widgets.cpp
     window/window_lock_widgets.h
+    window/window_logout_box.cpp
+    window/window_logout_box.h
     window/window_main_menu.cpp
     window/window_main_menu.h
     window/window_main_menu_helpers.cpp
@@ -2741,11 +2776,8 @@ if (WIN32)
     #     $<IF:${release},"Appending compatibility manifest.","Finalizing build.">
     # )
 
-    if (QT_VERSION LESS 6 OR DESKTOP_APP_WIN7_BASELINE)
-        target_link_libraries(Telegram PRIVATE desktop-app::win_directx_helper)
-    endif()
-
     if (DESKTOP_APP_WIN7_BASELINE)
+        target_link_libraries(Telegram PRIVATE desktop-app::win_directx_helper)
         # ANGLE loads d3dcompiler_47.dll from modules folder next to exe.
         if (build_win64)
             set(d3d_modules_subdir x64)
@@ -2764,12 +2796,11 @@ if (WIN32)
             "Copying d3dcompiler_47.dll for ANGLE."
         VERBATIM
         )
+        target_link_options(Telegram PRIVATE /SUBSYSTEM:WINDOWS,6.01)
     endif()
 
-    target_link_options(Telegram PRIVATE /PDBPAGESIZE:8192)
-
     set(yy_thunks_lib "")
-    if (DESKTOP_APP_WIN7_BASELINE)
+    if (DESKTOP_APP_WIN7_BASELINE AND NOT DESKTOP_APP_WIN7_PROBE)
         if (CMAKE_SIZEOF_VOID_P EQUAL 8)
             set(yy_thunks_arch x64)
         else()
@@ -2788,10 +2819,12 @@ if (WIN32)
         set_target_properties(yy_thunks_defaults PROPERTIES FOLDER "(external)")
 
         # Whole archive: a plain link takes only already undefined symbols.
-        target_link_options(Telegram PRIVATE "/WHOLEARCHIVE:${yy_thunks_lib}" /SUBSYSTEM:WINDOWS,6.01)
+        target_link_options(Telegram PRIVATE "/WHOLEARCHIVE:${yy_thunks_lib}")
         target_link_libraries(Telegram PRIVATE yy_thunks_defaults)
         target_compile_definitions(Telegram PRIVATE DESKTOP_APP_WIN7_BASELINE)
     endif()
+
+    target_link_options(Telegram PRIVATE /PDBPAGESIZE:8192)
 elseif (APPLE)
     if (NOT DESKTOP_APP_USE_PACKAGED)
         target_link_libraries(Telegram PRIVATE desktop-app::external_iconv)
@@ -2982,81 +3015,109 @@ if (MSVC)
     PRIVATE
         # Keep delay-load protection across Qt variants with different imports.
         /IGNORE:4199
-        /DELAYLOAD:secur32.dll
-        /DELAYLOAD:winmm.dll
-        /DELAYLOAD:ws2_32.dll
-        /DELAYLOAD:user32.dll
-        /DELAYLOAD:gdi32.dll
-        /DELAYLOAD:avrt.dll
-        /DELAYLOAD:shell32.dll
-        /DELAYLOAD:ole32.dll
-        /DELAYLOAD:oleaut32.dll
-        /DELAYLOAD:shlwapi.dll
-        /DELAYLOAD:iphlpapi.dll
-        /DELAYLOAD:gdiplus.dll
-        /DELAYLOAD:version.dll
-        /DELAYLOAD:dwmapi.dll
-        /DELAYLOAD:uxtheme.dll
-        /DELAYLOAD:crypt32.dll
-        /DELAYLOAD:bcrypt.dll
-        /DELAYLOAD:ncrypt.dll
-        /DELAYLOAD:netapi32.dll
-        /DELAYLOAD:mpr.dll
-        /DELAYLOAD:imm32.dll
-        /DELAYLOAD:hid.dll
-        /DELAYLOAD:userenv.dll
-        /DELAYLOAD:wtsapi32.dll
-        /DELAYLOAD:propsys.dll
-        /DELAYLOAD:uiautomationcore.dll
-        /DELAYLOAD:icu.dll
     )
-    # YY-Thunks covers imports bound at link time, not delayed ones.
-    if (NOT DESKTOP_APP_WIN7_BASELINE)
-        target_link_options(Telegram PRIVATE /DELAYLOAD:advapi32.dll)
-    endif()
-    if (QT_VERSION GREATER 6 AND NOT DESKTOP_APP_WIN7_BASELINE)
-        if (NOT build_winarm)
-            target_link_options(Telegram PRIVATE
-                /DELAYLOAD:API-MS-Win-EventLog-Legacy-l1-1-0.dll
-            )
-        endif()
-
+    if (DESKTOP_APP_WIN7_PROBE)
+        # Delay-load only Win8+ api-sets; other imports resolve at load time.
         target_link_options(Telegram
         PRIVATE
             /DELAYLOAD:API-MS-Win-Core-Console-l1-1-0.dll
             /DELAYLOAD:API-MS-Win-Core-Fibers-l2-1-0.dll
             /DELAYLOAD:API-MS-Win-Core-Fibers-l2-1-1.dll
             /DELAYLOAD:API-MS-Win-Core-File-l1-1-0.dll
-            # Not delayed: WindowsApp.lib binds LoadLibraryExA here, and
-            # __delayLoadHelper2 calls it to resolve delayed imports -- self-recurses.
+            # WindowsApp.lib binds LoadLibraryExA here; delay-load self-recurses.
             /DELAYLOAD:API-MS-Win-Core-Localization-l1-2-0.dll
             /DELAYLOAD:API-MS-Win-Core-Memory-l1-1-0.dll
             /DELAYLOAD:API-MS-Win-Core-Memory-l1-1-1.dll
-            /DELAYLOAD:API-MS-Win-Core-ProcessThreads-l1-1-0.dll
-            /DELAYLOAD:API-MS-Win-Core-Synch-l1-2-0.dll # Synchronization.lib
-            /DELAYLOAD:API-MS-Win-Core-SysInfo-l1-1-0.dll
-            # /DELAYLOAD:API-MS-Win-Core-Timezone-l1-1-0.dll
             /DELAYLOAD:API-MS-Win-Core-WinRT-l1-1-0.dll
             /DELAYLOAD:API-MS-Win-Core-WinRT-Error-l1-1-0.dll
             /DELAYLOAD:API-MS-Win-Core-WinRT-String-l1-1-0.dll
-            /DELAYLOAD:API-MS-Win-Security-CryptoAPI-l1-1-0.dll
-            # /DELAYLOAD:API-MS-Win-Shcore-Scaling-l1-1-1.dll # We shadowed GetDpiForMonitor
         )
-    endif()
-    if (QT_VERSION GREATER 6)
+    else()
         target_link_options(Telegram
         PRIVATE
-            /DELAYLOAD:authz.dll # Authz.lib
-            /DELAYLOAD:comdlg32.dll
-            /DELAYLOAD:dwrite.dll # DWrite.lib
-            /DELAYLOAD:dxgi.dll # DXGI.lib
-            /DELAYLOAD:d3d9.dll # D3D9.lib
-            /DELAYLOAD:d3d11.dll # D3D11.lib
-            /DELAYLOAD:d3d12.dll # D3D12.lib
-            /DELAYLOAD:setupapi.dll # SetupAPI.lib
-            /DELAYLOAD:winhttp.dll
+            /DELAYLOAD:secur32.dll
+            /DELAYLOAD:winmm.dll
+            /DELAYLOAD:ws2_32.dll
+            /DELAYLOAD:user32.dll
+            /DELAYLOAD:gdi32.dll
+            /DELAYLOAD:avrt.dll
+            /DELAYLOAD:shell32.dll
+            /DELAYLOAD:ole32.dll
+            /DELAYLOAD:oleaut32.dll
+            /DELAYLOAD:shlwapi.dll
+            /DELAYLOAD:iphlpapi.dll
+            /DELAYLOAD:gdiplus.dll
+            /DELAYLOAD:version.dll
+            /DELAYLOAD:dwmapi.dll
+            /DELAYLOAD:uxtheme.dll
+            /DELAYLOAD:crypt32.dll
+            /DELAYLOAD:bcrypt.dll
+            /DELAYLOAD:ncrypt.dll
+            /DELAYLOAD:netapi32.dll
+            /DELAYLOAD:mpr.dll
+            /DELAYLOAD:imm32.dll
+            /DELAYLOAD:hid.dll
+            /DELAYLOAD:userenv.dll
+            /DELAYLOAD:wtsapi32.dll
+            /DELAYLOAD:propsys.dll
+            /DELAYLOAD:uiautomationcore.dll
+            /DELAYLOAD:icu.dll
         )
+        # YY-Thunks covers imports bound at link time, not delayed ones.
+        if (NOT DESKTOP_APP_WIN7_BASELINE)
+            target_link_options(Telegram PRIVATE /DELAYLOAD:advapi32.dll)
+        endif()
+        if (QT_VERSION GREATER 6 AND NOT DESKTOP_APP_WIN7_BASELINE)
+            if (NOT build_winarm)
+                target_link_options(Telegram PRIVATE
+                    /DELAYLOAD:API-MS-Win-EventLog-Legacy-l1-1-0.dll
+                )
+            endif()
+
+            target_link_options(Telegram
+            PRIVATE
+                /DELAYLOAD:API-MS-Win-Core-Console-l1-1-0.dll
+                /DELAYLOAD:API-MS-Win-Core-Fibers-l2-1-0.dll
+                /DELAYLOAD:API-MS-Win-Core-Fibers-l2-1-1.dll
+                /DELAYLOAD:API-MS-Win-Core-File-l1-1-0.dll
+                # Not delayed: WindowsApp.lib binds LoadLibraryExA here, and
+                # __delayLoadHelper2 calls it to resolve delayed imports -- self-recurses.
+                /DELAYLOAD:API-MS-Win-Core-Localization-l1-2-0.dll
+                /DELAYLOAD:API-MS-Win-Core-Memory-l1-1-0.dll
+                /DELAYLOAD:API-MS-Win-Core-Memory-l1-1-1.dll
+                /DELAYLOAD:API-MS-Win-Core-ProcessThreads-l1-1-0.dll
+                /DELAYLOAD:API-MS-Win-Core-Synch-l1-2-0.dll # Synchronization.lib
+                /DELAYLOAD:API-MS-Win-Core-SysInfo-l1-1-0.dll
+                # /DELAYLOAD:API-MS-Win-Core-Timezone-l1-1-0.dll
+                /DELAYLOAD:API-MS-Win-Core-WinRT-l1-1-0.dll
+                /DELAYLOAD:API-MS-Win-Core-WinRT-Error-l1-1-0.dll
+                /DELAYLOAD:API-MS-Win-Core-WinRT-String-l1-1-0.dll
+                /DELAYLOAD:API-MS-Win-Security-CryptoAPI-l1-1-0.dll
+                # /DELAYLOAD:API-MS-Win-Shcore-Scaling-l1-1-1.dll # We shadowed GetDpiForMonitor
+            )
+        endif()
+        if (QT_VERSION GREATER 6)
+            target_link_options(Telegram
+            PRIVATE
+                /DELAYLOAD:authz.dll # Authz.lib
+                /DELAYLOAD:comdlg32.dll
+                /DELAYLOAD:dwrite.dll # DWrite.lib
+                /DELAYLOAD:dxgi.dll # DXGI.lib
+                /DELAYLOAD:d3d9.dll # D3D9.lib
+                /DELAYLOAD:d3d11.dll # D3D11.lib
+                /DELAYLOAD:d3d12.dll # D3D12.lib
+                /DELAYLOAD:setupapi.dll # SetupAPI.lib
+                /DELAYLOAD:winhttp.dll
+            )
+        endif()
     endif()
+endif()
+
+if (WIN32 AND DESKTOP_APP_WIN7_PROBE)
+    nice_target_sources(Telegram ${src_loc}
+    PRIVATE
+        _other/win7_probe_api_stubs.cpp
+    )
 endif()
 
 target_prepare_qrc(Telegram)
@@ -3097,6 +3158,7 @@ if (NOT DESKTOP_APP_DISABLE_AUTOUPDATE AND NOT build_macstore AND NOT build_wins
                 /DELAYLOAD:user32.dll
                 /DELAYLOAD:shell32.dll
                 /DELAYLOAD:ole32.dll
+                /DELAYLOAD:oleaut32.dll
                 /DELAYLOAD:shlwapi.dll
             )
             if (NOT DESKTOP_APP_WIN7_BASELINE)

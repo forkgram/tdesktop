@@ -97,7 +97,7 @@ void HttpConnection::connectToServer(
 		int port,
 		const bytes::vector &protocolSecret,
 		int16 protocolDcId,
-		bool protocolForFiles,
+		bool,
 		const QString &webSocketPath) {
 	_address = address;
 	_secure = !webSocketPath.isEmpty();

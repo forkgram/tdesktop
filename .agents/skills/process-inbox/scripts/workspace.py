@@ -126,6 +126,8 @@ HOST_LOAD_SNAPSHOT_ATTEMPTS = 8
 HOST_LOAD_LAST_SAMPLES = 5
 HOST_LOAD_TOP = 3
 HOST_LOAD_SAMPLES_FILE = "host_load_samples.jsonl"
+RELAUNCH_POLL_INTERVAL = 0.5
+FILETIME_UNIX_EPOCH_SECONDS = 11644473600
 
 
 class WorkspaceError(RuntimeError):
@@ -707,6 +709,11 @@ def is_linked_worktree(source, path):
 	)
 
 
+def is_foreign_checkout(source, path):
+	module = Path(source) / path
+	return module.resolve() != module or is_linked_worktree(source, path + "/")
+
+
 def indexed_gitlinks(source):
 	result = {}
 	for entry in literal_paths(source, "ls-files", "--stage"):
@@ -748,7 +755,7 @@ def source_local_changes(source):
 	))
 	for path in gitlinks:
 		module = Path(source) / path
-		if module.resolve() != module or is_linked_worktree(source, path + "/"):
+		if is_foreign_checkout(source, path):
 			dirty.add(path)
 		elif (module / ".git").exists():
 			dirty.update(
@@ -802,7 +809,7 @@ def protect_worktrees_from_submodule_target(module, revision):
 	if not worktrees:
 		return
 	if run_git(module, "cat-file", "-e", revision + "^{commit}", check=False).returncode:
-		run_git(module, "fetch")
+		run_git(module, "fetch", "--no-recurse-submodules")
 	for entry in literal_paths(module, "ls-tree", "-r", revision):
 		metadata, path = entry.split("\t", 1)
 		mode = metadata.split()[0]
@@ -821,7 +828,7 @@ def protect_worktrees_from_submodule_target(module, revision):
 def update_source_submodules(source):
 	for path, revision in indexed_gitlinks(source).items():
 		module = Path(source) / path
-		if module.resolve() != module or is_linked_worktree(source, path + "/"):
+		if is_foreign_checkout(source, path):
 			raise WorkspaceError("Submodule checkout is owned by another path: " + str(module))
 		if (module / ".git").exists() and resolved_ref(module, "HEAD") != revision:
 			protect_worktrees_from_submodule_target(module, revision)
@@ -2332,7 +2339,7 @@ def ensure_task_branch(config, slot, task):
 
 
 def fetch_remote(repo, remote):
-	run_git(repo, "fetch", "--quiet", remote)
+	run_git(repo, "fetch", "--quiet", "--no-recurse-submodules", remote)
 
 
 def tree_gitlinks(repo, revision):
@@ -2500,6 +2507,7 @@ def replay_project_history(source, commits, onto, ranges, targets, branch, origi
 			touched.append(
 				(module, current_branch(module), resolved_ref(module, "HEAD"))
 			)
+			fetch_nested_pins(module, target)
 			_, mapping = replay_commits(
 				module, linear_commits(module, older, newer), target,
 			)
@@ -2601,6 +2609,20 @@ def module_branch_tips(source, paths, project, tips):
 			fetch_remote(module, "origin")
 			tips[path] = remote_branch_tip(module, "origin", project)
 	return tips
+
+
+def fetch_nested_pins(module, revision):
+	"""Fetch nested repositories lacking a pin of revision, for gitlink merges."""
+	current = indexed_gitlinks(module)
+	for path, pin in tree_gitlinks(module, revision).items():
+		nested = module / path
+		if (
+			path in current
+			and not is_foreign_checkout(module, path)
+			and (nested / ".git").exists()
+			and resolved_ref(nested, pin) is None
+		):
+			fetch_remote(nested, "origin")
 
 
 def recorded_modules(source, task_id):
@@ -3890,9 +3912,9 @@ def processes_with_executable(exe):
 	return pids
 
 
-def kill_processes_with_executable(exe):
+def kill_process_ids(pids):
 	killed = []
-	for pid in processes_with_executable(exe):
+	for pid in pids:
 		try:
 			if sys.platform == "win32":
 				subprocess.run(
@@ -3906,6 +3928,10 @@ def kill_processes_with_executable(exe):
 		except (OSError, subprocess.SubprocessError):
 			continue
 	return killed
+
+
+def kill_processes_with_executable(exe):
+	return kill_process_ids(processes_with_executable(exe))
 
 
 @contextlib.contextmanager
@@ -4094,6 +4120,16 @@ def windows_process_snapshot(size):
 	if not records:
 		raise OSError("process snapshot listed no process")
 	return size, records
+
+
+def executable_process_starts(exe):
+	pids = processes_with_executable(exe)
+	_, records = windows_process_snapshot(HOST_LOAD_SNAPSHOT_SIZE)
+	return {
+		pid: records[pid]["created"] / 10**7 - FILETIME_UNIX_EPOCH_SECONDS
+		for pid in pids
+		if pid in records
+	}
 
 
 def macos_system_library():
@@ -4906,6 +4942,16 @@ def host_load_unsupported_reason(platform=None):
 	return f"host-load sampling needs Windows or macOS, this host is {platform}"
 
 
+def relaunch_unsupported_reason(platform=None):
+	platform = sys.platform if platform is None else platform
+	if platform == "win32":
+		return None
+	return (
+		"keeping a relaunched client reads process start times on Windows only, "
+		f"this host is {platform}"
+	)
+
+
 def host_load_tools_json(seen):
 	return [
 		{"name": name, "pid": pid}
@@ -5239,6 +5285,39 @@ class HostLoadMonitor:
 		return report
 
 
+def keep_relaunched_clients(
+		exe, launched_at, exited_at, bound, clock=time.time, sleep=time.sleep):
+	kept = set()
+	stragglers = []
+	while True:
+		old = []
+		for pid, started in executable_process_starts(exe).items():
+			if started > launched_at:
+				kept.add((pid, started))
+			elif pid not in stragglers:
+				old.append(pid)
+		if old:
+			stragglers.extend(kill_process_ids(old))
+		remaining = exited_at + bound - clock()
+		if remaining <= 0:
+			break
+		sleep(min(RELAUNCH_POLL_INTERVAL, remaining))
+	ended = kill_processes_with_executable(exe)
+	report = {
+		"bound_seconds": bound,
+		"clients": [
+			{
+				"exited_by_itself": pid not in ended,
+				"pid": pid,
+				"started_seconds": round(started - exited_at, 3),
+			}
+			for pid, started in sorted(kept, key=lambda client: (client[1], client[0]))
+		],
+		"ended_at_bound": ended,
+	}
+	return stragglers, report
+
+
 def command_test_run(args):
 	extra_environment = parse_env_values(args.env)
 	if LAUNCH_ACTIVATION_VARIABLE in extra_environment:
@@ -5251,6 +5330,12 @@ def command_test_run(args):
 			raise WorkspaceError("--wait-idle must be a positive number of seconds")
 		if not 0 <= args.wait_idle_max < float("inf"):
 			raise WorkspaceError("--wait-idle-max must be zero or more seconds")
+	if args.keep_relaunched is not None:
+		if not 0 < args.keep_relaunched < float("inf"):
+			raise WorkspaceError("--keep-relaunched must be a positive number of seconds")
+		unsupported = relaunch_unsupported_reason()
+		if unsupported:
+			raise WorkspaceError(f"--keep-relaunched: {unsupported}")
 	host_load = host_load_parameters(args)
 	exe = resolved_exe(args.exe)
 	run_dir = Path(args.run_dir).expanduser().resolve()
@@ -5321,6 +5406,7 @@ def command_test_run(args):
 	if monitor is not None:
 		monitor.wait()
 	_, input_before = console_input_reading()
+	relaunched = None
 	launched_at = time.time()
 	with executable_killed_on_abort(exe), contextlib.ExitStack() as streams:
 		if bundle is None:
@@ -5378,7 +5464,12 @@ def command_test_run(args):
 		ended_at = time.time()
 		if monitor is not None:
 			monitor.stop_trace()
-		stragglers_after = kill_processes_with_executable(exe)
+		if args.keep_relaunched is None:
+			stragglers_after = kill_processes_with_executable(exe)
+		else:
+			stragglers_after, relaunched = keep_relaunched_clients(
+				exe, launched_at, ended_at, args.keep_relaunched
+			)
 	launcher_exit_code = None
 	if bundle is not None:
 		# open -W exits 0 whatever the client's status, so only open's own is known
@@ -5433,7 +5524,7 @@ def command_test_run(args):
 	)
 	host_load_report = monitor.report(run_dir) if monitor is not None else None
 
-	print(json.dumps({
+	report = {
 		"account": account,
 		"crash_report": str(working) if working.is_file() else None,
 		"crash_report_excerpt": (
@@ -5469,7 +5560,10 @@ def command_test_run(args):
 		"verdict_hint": verdict_hint,
 		"wait_idle": wait_idle,
 		"workdir": str(workdir) if workdir is not None else None,
-	}, indent=2, sort_keys=True))
+	}
+	if relaunched is not None:
+		report["relaunched"] = relaunched
+	print(json.dumps(report, indent=2, sort_keys=True))
 
 
 def command_test_cleanup(args):
@@ -5846,6 +5940,29 @@ def gitlink_paths(source, paths):
 	return result
 
 
+def submodule_pin_problem(source, path):
+	"""Why source-commit cannot commit the dirty gitlink at path, or None.
+
+	The submodule must be an initialized checkout of its own, with a commit
+	checked out and no changes, nested submodules included. Staging the path
+	then records that checked-out commit.
+	"""
+	module = Path(source).resolve() / path
+	if (
+		module.resolve() != module
+		or is_linked_worktree(source, path + "/")
+		or not (module / ".git").exists()
+		or resolved_ref(module, "HEAD") is None
+	):
+		return "not an initialized checkout with a commit checked out"
+	changes = source_changed_paths(module)
+	if changes:
+		return "uncommitted changes: " + ", ".join(
+			f"{path}/{value}" for value in changes
+		)
+	return None
+
+
 def mirror_source_head(config):
 	tag = config.get("checkout_tag")
 	if not tag:
@@ -5860,7 +5977,8 @@ def mirror_source_head(config):
 		push = subprocess.run(
 			[
 				"git", "-C", str(source), "push", "--force", "--quiet",
-				MIRROR_REMOTE, f"HEAD:refs/heads/{branch}",
+				"--recurse-submodules=no", MIRROR_REMOTE,
+				f"HEAD:refs/heads/{branch}",
 			],
 			stdin=subprocess.DEVNULL,
 			stdout=subprocess.PIPE,
@@ -5917,20 +6035,26 @@ def command_source_commit(args):
 	dirty = source_changed_paths(source)
 	if not dirty:
 		raise WorkspaceError("The source checkout has no changes to commit")
+	submodules = gitlink_paths(source, dirty)
 	outside = [
 		path for path in dirty
-		if not path_is_covered(path, allowed)
+		if not (
+			path in owned if path in submodules
+			else path_is_covered(path, allowed)
+		)
 	]
 	if outside:
 		raise WorkspaceError(
 			"Dirty source paths are outside the owned write set: "
 			+ ", ".join(outside)
 		)
-	submodules = gitlink_paths(source, dirty)
-	if submodules:
+	problems = [
+		f"{path}: {problem}" for path in submodules
+		for problem in [submodule_pin_problem(source, path)] if problem
+	]
+	if problems:
 		raise WorkspaceError(
-			"Submodule pointers must be committed explicitly first: "
-			+ ", ".join(submodules)
+			"Submodule pointers cannot be committed:\n" + "\n".join(problems)
 		)
 	for path in dirty:
 		if path_is_stageable(source, path):
@@ -8076,6 +8200,7 @@ def parse_args():
 	)
 	test_run.add_argument("--activate", action="store_true")
 	test_run.add_argument("--env", action="append")
+	test_run.add_argument("--keep-relaunched", type=float)
 	test_run.set_defaults(handler=command_test_run)
 
 	test_cleanup = subparsers.add_parser("test-cleanup")

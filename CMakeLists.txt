@@ -132,4 +132,7 @@ set(desktop_app_skip_libs
 )
 
 add_subdirectory(cmake)
+if (APPLE AND NOT DESKTOP_APP_USE_PACKAGED)
+    target_link_libraries(external_ffmpeg INTERFACE desktop-app::external_iconv)
+endif()
 add_subdirectory(Telegram)

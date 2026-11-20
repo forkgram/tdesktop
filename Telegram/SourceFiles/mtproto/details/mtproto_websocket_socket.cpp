@@ -24,6 +24,7 @@ constexpr auto kOpcodePong = quint8(0xA);
 
 constexpr auto kMaxFramePayload = quint64(16 * 1024 * 1024);
 constexpr auto kMaxUpgradeResponse = 8 * 1024;
+constexpr auto kFilesBufferSize = 2 * 1024 * 1024;
 
 const auto kAcceptGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
@@ -43,10 +44,10 @@ WebSocketSocket::WebSocketSocket(
 	if (protocolForFiles) {
 		_socket.setSocketOption(
 			QAbstractSocket::SendBufferSizeSocketOption,
-			kFilesSendBufferSize);
+			kFilesBufferSize);
 		_socket.setSocketOption(
 			QAbstractSocket::ReceiveBufferSizeSocketOption,
-			kFilesReceiveBufferSize);
+			kFilesBufferSize);
 	}
 	const auto wrap = [&](auto handler) {
 		return [=](auto &&...args) {

@@ -518,25 +518,9 @@ jobs:
         id: cache-libs
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
-          path: |
-            ${{ env.LibrariesPath }}\*
-            !${{ env.LibrariesPath }}\cache_keys
-            !${{ env.LibrariesPath }}\[qQ]t[_-]*
-            ${{ env.LibrariesPath }}\cache_keys\*
-            !${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
-          key: ${{ runner.OS }}-x64-libs-v2rel-${{ env.CACHE_KEY }}
-          restore-keys: ${{ runner.OS }}-x64-libs-v2rel-
-
-      - name: Qt cache.
-        id: cache-qt
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: |
-            ${{ env.LibrariesPath }}\[qQ]t[_-]*
-            ${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
-          # New prefix: the old -qtrel- caches hold the dropped Qt 5 build.
-          key: ${{ runner.OS }}-x64-qtrel-w7-${{ env.CACHE_KEY }}
-          restore-keys: ${{ runner.OS }}-x64-qtrel-w7-
+          path: ${{ env.LibrariesPath }}
+          key: ${{ runner.OS }}-x64-rel-libs-${{ env.CACHE_KEY }}
+          restore-keys: ${{ runner.OS }}-x64-rel-libs-
 
       - name: Libraries.
         run: |
@@ -587,22 +571,8 @@ jobs:
         if: steps.cache-libs.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
-          path: |
-            ${{ env.LibrariesPath }}\*
-            !${{ env.LibrariesPath }}\cache_keys
-            !${{ env.LibrariesPath }}\[qQ]t[_-]*
-            ${{ env.LibrariesPath }}\cache_keys\*
-            !${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
+          path: ${{ env.LibrariesPath }}
           key: ${{ steps.cache-libs.outputs.cache-primary-key }}
-
-      - name: Save Qt cache.
-        if: steps.cache-qt.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: |
-            ${{ env.LibrariesPath }}\[qQ]t[_-]*
-            ${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
-          key: ${{ steps.cache-qt.outputs.cache-primary-key }}
 
       - name: Telegram Desktop build.
         run: |
@@ -671,8 +641,9 @@ jobs:
           # Both binaries are verified here, on the exact bytes that get
           # packed: Updater.exe travels only inside the update envelope,
           # the publish job can re-check just the portable's Telegram.exe.
-          signtool verify /pa /all Telegram.exe
-          signtool verify /pa /all Updater.exe
+          # Per command: smctl needs Git Bash to convert SM_CLIENT_CERT_FILE.
+          MSYS_NO_PATHCONV=1 signtool verify /pa /all Telegram.exe
+          MSYS_NO_PATHCONV=1 signtool verify /pa /all Updater.exe
           echo "signed=true" >> $GITHUB_OUTPUT
 
       - name: Azure login for update signing.

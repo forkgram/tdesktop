@@ -557,7 +557,7 @@ void Header::setVideoStreamViewers(rpl::producer<int> viewers) {
 	auto helper = Ui::Text::CustomEmojiHelper();
 	const auto badge = helper.paletteDependent(
 		Ui::Text::CustomEmojiTextBadge(
-			tr::lng_video_stream_live(tr::now).toUpper(),
+			tr::lng_video_stream_live(tr::now, tr::upper),
 			st::groupCallMessageBadge,
 			st::groupCallMessageBadgeMargin));
 	const auto context = helper.context();
@@ -888,6 +888,13 @@ void Header::rebuildVolumeControls(
 		updateVolumeIcon();
 	});
 	slider->setValue(_controller->currentVolume());
+	_controller->volumeChanges(
+	) | rpl::on_next([=](float64 volume) {
+		if (!slider->isChanging()) {
+			slider->setValue(volume);
+		}
+		updateVolumeIcon();
+	}, slider->lifetime());
 
 	const auto size = button->width()
 		+ st::storiesVolumeSize

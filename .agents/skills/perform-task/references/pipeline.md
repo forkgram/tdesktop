@@ -187,6 +187,7 @@ work/review1.md                # canonical first-review verdict
 work/review<R>-focused.md      # mandatory focused general re-review, R > 1
 work/review<R>-<specialist>.md # only specialists invalidated by the fix
 work/review-convergence<C>.md  # loop diagnosis at a checkpoint or cycle
+work/requirement-check<K>.md   # self-contradiction check per 5 failed rounds
 work/test-design.md            # assessed evidence contract, reconciled after diff
 work/test.md
 work/test-cap-assessment-*.md  # independent focused-recovery decision at a campaign cap
@@ -266,9 +267,9 @@ prompts, plus the host-specific orchestration rules.
   with the parent's concrete justification that the phase has no complexity.
   Apply the host mapping, including Claude's `opus` pin for `medium` or
   justified `high` work.
-- On Claude Code, assessment, every review and the convergence and
-  campaign-cap assessments run as Codex CLI leaves unless the invocation opted
-  out; see the Claude adapter's review and assessment provider. Prompts,
+- On Claude Code, assessment, every review, the requirement checks and the
+  convergence and campaign-cap assessments run as Codex CLI leaves unless the
+  invocation opted out; see the Claude adapter's review and assessment provider. Prompts,
   artifacts, completion checks and verdict handling are unchanged.
 - Keep implementation units sequential unless the assessed plan proves
   disjoint write sets and capacity makes parallel edits safe.
@@ -313,13 +314,13 @@ Run sequentially:
    the approach against the closest repository precedent and its containment
    against the shared modules it touches, and reject over-engineering rather
    than refining it. Before approving the plan, apply the intrinsic-scope gate:
-   if it contains several useful boundaries with separate acceptance or
-   evidence, stable dependency order, or materially different subsystems and
-   failure analysis, write `work/split-proposal.md`, record
-   `Scope: split-required`, and stop before source edits. Phase count and line
-   count are warning signals, not automatic decisions; the decisive question
-   is whether one fresh reviewer and one coherent evidence campaign can judge
-   the retained result. On layout tasks verify the visual contract's anchors
+   if one fresh reviewer and one coherent evidence campaign cannot judge the
+   retained result, because it spans materially different subsystems and
+   failure analysis, fixtures or platforms, write `work/split-proposal.md`
+   with two replacements by default, record `Scope: split-required`, and stop
+   before source edits. Several useful parts with their own acceptance, a
+   stable dependency order, phase count and line count are warning signals,
+   not automatic decisions: each extra task costs a whole campaign. On layout tasks verify the visual contract's anchors
    and derivation; on a fast-path plan verify the sizing itself. Require
    `Phases: <N>` and `Assessed: yes`, or a recorded `Fast-Path: rejected` /
    `Approach: rejected` outcome that reruns Phase 1 as a fresh leaf — an
@@ -362,7 +363,9 @@ Run sequentially:
    a broad surface is not enough to replay it. Reconcile only invalidated
    evidence checks and rerun only affected validation. The loop runs until
    the reviewers agree; at the convergence checkpoints below an independent
-   assessor diagnoses it and continues, replans or rescopes it.
+   assessor diagnoses it and continues, replans or rescopes it, and every
+   fifth verdict that needs changes a requirement check first asks whether
+   the task contradicts itself.
 6. **Normalize.** On native non-WSL Windows, normalize only task-owned source,
    header, style, localization, and build/config text to CRLF without BOM,
    preserving content and trailing-newline state, then rerun the selected
@@ -460,8 +463,9 @@ scaled to what the code is for:
   non-blocking notes. Every review, synthesis, focused review and convergence
   prompt of a harness task carries this bar (phase prompts, "Harness tasks").
 - **Models.** On Codex, the plan assessment, every review and synthesis, the
-  convergence assessments and the evidence assessments of a harness task run
-  on `gpt-6.1-sol` ([phase effort](../../../shared/phase-effort.md#lens-models)).
+  requirement checks, the convergence assessments and the evidence
+  assessments of a harness task run on `gpt-6.2-sol`
+  ([phase effort](../../../shared/phase-effort.md#review-models)).
 - **Evidence.** The harness self-test, or one consumer run, shows that the
   helper gives its consumers what they need.
 
@@ -621,6 +625,52 @@ Otherwise it chooses `REPLAN_CURRENT` or `RESCOPE_REQUIRED`. An older
 assessment that allowed only one final focused round reads as `CONTINUE` with
 the default checkpoint; its final round no longer stops the loop.
 
+### Requirement check
+
+A convergence ruling can only choose between readings of the task. When the
+task's requirements cannot all hold at once, every reading leaves a reviewer
+a valid finding and the loop cannot converge. So at every fifth canonical
+verdict that requires changes, counted over the whole loop and not restarted
+by a replan (the fifth, the tenth and so on), a fresh independent checker
+first asks whether the task contradicts itself.
+
+The checker reads the loop the convergence assessor reads and looks for two
+requirements that no implementation can meet together in a reachable case:
+fixes that satisfy one producing findings under the other, or rulings that
+switch between readings. A hard design, many special cases or a regrowing
+mechanism is not a contradiction. Finding one, it traces each side to its
+origin, as close to the start as the records reach:
+
+- the task's history in the queue checkout, back to the commit that created
+  `task.md`, and the routing, follow-up and consolidation commits that
+  changed it;
+- the receipt named by `inbox_receipt` in `state.yaml` and the owner's words
+  it quotes, and the inbox text in `inbox/backup/` of the checkout that routed
+  it, where it still exists;
+- the investigation, `project.md` and source-task records that the receipt
+  and the task cite, and owner decisions recorded since.
+
+Each side is either the owner's own words in the initial requirements, or an
+interpretation added later: by the routing or planner that drafted the task,
+a follow-up or consolidation, plan.md or decisions.md, a convergence ruling,
+or a reviewer's demand. It writes `requirement-check<K>.md` with one verdict:
+
+- `CONSISTENT` — no contradiction. The loop continues, and a convergence
+  assessment due at the same verdict runs as usual.
+- `RESOLVED` — at least one side is an interpretation. The checker decides
+  how the contradiction resolves, from the earliest statement of intent, then
+  the project and the closest repository precedent, preferring the simpler
+  mechanism when both serve that intent: which requirement gives way, what
+  the code does instead, and which task text, decisions and rulings this
+  supersedes. The performer records it in `decisions.md`, notes the override
+  in `result.md`, and runs a convergence assessment next even when none is
+  due; that assessment copies the resolution into its rulings unchanged.
+- `OWNER_QUESTION` — both sides are the owner's own words in the initial
+  requirements. The task publishes the same task-local `Block` as
+  `HARD_STOP`, giving the two quotes with their locations, why no reading
+  meets both, and the resolutions the owner would choose between. It is set
+  aside for the owner; the run continues with other work.
+
 ### Evidence selection
 
 Every task runs the same evidence loop. It may combine instruments:
@@ -729,10 +779,17 @@ The performer owns commit boundaries. The workspace helper's `source-commit`
 command is the standard mechanism: it enforces this section's contract —
 every dirty path verified against the union of owned write sets, only explicit
 paths staged, never `git add -A`, the exact three-line message — in one
-deterministic call. Commit an intended submodule first, manually, only when
-its preflight was clean and all of its changes belong to this task, then stage
-the superproject pointer; the helper refuses dirty submodule pointers so an
-unintended one can never slip into an attempt.
+deterministic call. A task that moves a submodule pin commits inside the
+submodule first, by hand, only when its preflight was clean and all of its
+changes belong to this task. It names the submodule path itself, such as
+`Telegram/ThirdParty/widget-sandbox`, in `work/owned-paths.txt` and runs
+`source-commit` as for any other commit; staging the pin by hand is not
+needed. The helper records the submodule's checked-out commit with the other
+owned paths, then marks green and mirrors as usual. So that an unintended
+pointer can never slip into an attempt, it refuses, before staging anything, a
+moved pin the owned write set does not name exactly (an owned parent directory
+or a file inside does not name it) and a submodule with uncommitted changes,
+untracked files and moved or dirty nested submodules included.
 
 After every commit, `source-commit` force-pushes the checkout's `HEAD` to
 `refs/heads/ai-<checkout-tag>` on the `private` remote, for example
@@ -740,11 +797,12 @@ After every commit, `source-commit` force-pushes the checkout's `HEAD` to
 pre-approval attempts and fixes after testing included, so other checkouts can
 look at work in progress. Nobody works on it and it is never a lineage source:
 the checkout stays on whatever branch it has checked out, and the next commit
-from any branch overwrites the mirror. A checkout without a `private` remote
-skips the mirror. A failed or timed-out push only shows up in the helper's
-`mirror` result: it never fails the commit or blocks the task, so note it in
-the result `NOTES:` and continue. Do not push the mirror by hand, with a lease,
-or from any other point in the workflow.
+from any branch overwrites the mirror. The push never recurses into submodules:
+a moved pin reaches the mirror, but the submodule commit it names does not. A
+checkout without a `private` remote skips the mirror. A failed or timed-out
+push only shows up in the helper's `mirror` result: it never fails the commit
+or blocks the task, so note it in the result `NOTES:` and continue. Do not push
+the mirror by hand, with a lease, or from any other point in the workflow.
 
 Every implementation or implementation-fix commit message is exactly:
 
