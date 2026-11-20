@@ -1107,6 +1107,8 @@ patch -p1 -d /usr/lib64/gobject-introspection -i $PWD/patches/gobject-introspect
 rm -rf patches
 EOF
 
+RUN --mount=type=cache,target=/var/cache/dnf dnf -y upgrade expat
+
 ENV CCACHE_DISABLE=true
 WORKDIR /usr/src/tdesktop
 USER user
