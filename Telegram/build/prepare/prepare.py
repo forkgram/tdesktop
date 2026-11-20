@@ -877,6 +877,7 @@ winarm:
     SET "PATH=%LIBS_DIR%\\gas-preprocessor;%PATH%"
     echo armasm64 fails with 'syntax error in expression: tbnz x14, #4, 8f' as if this instruction is unknown/unsupported.
     git revert --no-edit d503bb0ccaf104b2f13da0f092e09cc9411b3297
+    git cherry-pick --no-commit a34e0685b9111b9eb1d7835ea7bea5b425dced73
 win:
     set FILE=cross-file.txt
     echo [binaries] > %FILE%
