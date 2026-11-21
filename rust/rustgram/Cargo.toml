@@ -1,0 +1,27 @@
+[package]
+name = "rustgram"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+
+[dependencies]
+grammers-client = "0.12"
+grammers-mtsender = "0.12"
+grammers-session = { version = "0.12", features = ["sqlite-storage"] }
+tokio = { version = "1", features = ["rt", "time", "net", "macros", "fs", "io-util"] }
+rpassword = "7"
+eframe = { version = "0.37", optional = true, default-features = false, features = ["glow", "wayland", "x11", "default_fonts", "accesskit", "clipboard"] }
+
+[features]
+gui = ["dep:eframe"]
+
+[[bin]]
+name = "rustgram-gui"
+path = "src/bin/rustgram-gui.rs"
+required-features = ["gui"]
+
+[[example]]
+name = "gui-fixture"
+path = "tests/support/gui_fixture.rs"
+required-features = ["gui"]
+test = false
