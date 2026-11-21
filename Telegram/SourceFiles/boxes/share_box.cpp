@@ -1528,7 +1528,11 @@ void ShareBox::Inner::paintStoryRepost(Painter &p) {
 	});
 	p.setPen(Qt::NoPen);
 	p.setBrush(gradient);
-	p.drawEllipse(circleRect);
+	if (style::SquareUserpics()) {
+		p.drawRect(circleRect);
+	} else {
+		p.drawEllipse(circleRect);
+	}
 
 	if (_storyRepostLottie) {
 		_storyRepostLottie->paintInCenter(p, circleRect);
