@@ -2,7 +2,7 @@ name: forkgram
 adopt-info: forkgram
 icon: Telegram/Resources/art/icon512@2x.png
 
-base: core24
+base: core26
 grade: stable
 confinement: strict
 compression: lzo
@@ -42,12 +42,12 @@ parts:
     parse-info: [usr/share/metainfo/io.github.forkgram.tdesktop.metainfo.xml]
     build-environment:
       - PKG_CONFIG_PATH: $CRAFT_STAGE/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}
-      - LDFLAGS: ${LDFLAGS:+$LDFLAGS} -Wl,--push-state,--no-as-needed,-ldav1d,--pop-state
     build-packages:
       - libboost-regex-dev
       - libheif-dev
       - libjxl-dev
       - liblz4-dev
+      - libssl-dev
       - libxcb-keysyms1-dev
       - libxcb-record0-dev
     cmake-generator: Ninja
@@ -92,7 +92,6 @@ parts:
       - minizip
       - mozjpeg
       - openal
-      - openssl
       - qt
       - rnnoise
       - tde2e
@@ -102,29 +101,45 @@ parts:
   pkgs:
     plugin: nil
     stage-packages:
-      - gstreamer1.0-fdkaac
       - gstreamer1.0-plugins-bad
       - libgeoclue-2-0
-      - libopenh264-7
+      - libopenh264-8
       - libxcb-cursor0
+      - libxcb-icccm4
+      - libxcb-image0
+      - libxcb-keysyms1
       - libxcb-record0
+      - libxcb-render-util0
+      - libxcb-shape0
+      - libxcb-util1
+      - libxcb-xkb1
+      - libxkbcommon-x11-0
     stage:
+      - ./usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/gstreamer-1.0/libgstaom.so
       - ./usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/gstreamer-1.0/libgstde265.so
-      - ./usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/gstreamer-1.0/libgstfdkaac.so
+      - ./usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/gstreamer-1.0/libgstfaad.so
       - ./usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/gstreamer-1.0/libgstopenh264.so
+      - ./usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/gstreamer-1.0/libgstopusparse.so
       - ./usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/gstreamer-1.0/libgstsubenc.so
-      - ./usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/gstreamer-1.0/libgstva.so
       - ./usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/gstreamer-1.0/libgstvideoparsersbad.so
-      - ./usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libfdk-aac.so*
+      - ./usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libfaad.so*
       - ./usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libgeoclue-2.so*
       - ./usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libopenh264.so*
       - ./usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libxcb-cursor.so*
+      - ./usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libxcb-icccm.so*
+      - ./usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libxcb-image.so*
+      - ./usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libxcb-keysyms.so*
       - ./usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libxcb-record.so*
+      - ./usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libxcb-render-util.so*
+      - ./usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libxcb-shape.so*
+      - ./usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libxcb-util.so*
+      - ./usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libxcb-xkb.so*
+      - ./usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libxkbcommon-x11.so*
 
   patches:
     source: https://github.com/desktop-app/patches.git
     source-depth: 1
-    source-commit: 69f23a834024d6064da209076151393582b3c966
+    source-commit: 8a28b8433af70771c3d101c776ad837a94bd47ec
     plugin: nil
     override-pull: |
       craftctl default
@@ -137,8 +152,6 @@ parts:
     source-depth: 1
     source-tag: v1.3.0
     plugin: cmake
-    build-packages:
-      - libdav1d-dev
     cmake-generator: Ninja
     cmake-parameters:
       - -DCMAKE_BUILD_TYPE=Release
@@ -146,6 +159,27 @@ parts:
       - -DBUILD_SHARED_LIBS=OFF
       - -DAVIF_CODEC_DAV1D=SYSTEM
       - -DAVIF_LIBYUV=OFF
+    override-pull: |
+      craftctl default
+      sed -i 's/ -lavif$/& -ldav1d/' libavif.pc.cmake
+    prime: [-./*]
+    after:
+      - dav1d
+
+  dav1d:
+    source: https://github.com/videolan/dav1d.git
+    source-depth: 1
+    source-tag: 1.5.4
+    plugin: meson
+    build-packages:
+      - meson
+      - nasm
+    meson-parameters:
+      - --buildtype=release
+      - --prefix=/usr
+      - --default-library=static
+      - -Denable_tools=false
+      - -Denable_tests=false
     prime: [-./*]
 
   ffmpeg:
@@ -155,7 +189,6 @@ parts:
     plugin: autotools
     build-packages:
       - nasm
-      - libdav1d-dev
       - libopenh264-dev
       - libopus-dev
       - libvdpau-dev
@@ -164,8 +197,6 @@ parts:
     autotools-configure-parameters:
       - --prefix=/usr
       - --libdir=/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR
-      - --extra-cflags="-DCONFIG_SAFE_BITSTREAM_READER=1"
-      - --extra-cxxflags="-DCONFIG_SAFE_BITSTREAM_READER=1"
       - --disable-debug
       - --disable-programs
       - --disable-doc
@@ -182,9 +213,9 @@ parts:
       - --enable-libdrm
       - --enable-ffnvcodec
       - --enable-nvdec
-      - --enable-cuvid
       - --enable-protocol=file
       - --enable-hwaccel=av1_vaapi
+      - --enable-hwaccel=av1_vdpau
       - --enable-hwaccel=av1_nvdec
       - --enable-hwaccel=h264_vaapi
       - --enable-hwaccel=h264_vdpau
@@ -192,6 +223,8 @@ parts:
       - --enable-hwaccel=hevc_vaapi
       - --enable-hwaccel=hevc_vdpau
       - --enable-hwaccel=hevc_nvdec
+      - --enable-hwaccel=mpeg1_vdpau
+      - --enable-hwaccel=mpeg1_nvdec
       - --enable-hwaccel=mpeg2_vaapi
       - --enable-hwaccel=mpeg2_vdpau
       - --enable-hwaccel=mpeg2_nvdec
@@ -207,7 +240,6 @@ parts:
       - --enable-decoder=ac3
       - --enable-decoder=alac
       - --enable-decoder=av1
-      - --enable-decoder=av1_cuvid
       - --enable-decoder=eac3
       - --enable-decoder=flac
       - --enable-decoder=gif
@@ -221,11 +253,11 @@ parts:
       - --enable-decoder=mp2
       - --enable-decoder=mp2float
       - --enable-decoder=mp3
-      - --enable-decoder=mp3adu
-      - --enable-decoder=mp3adufloat
       - --enable-decoder=mp3float
       - --enable-decoder=mp3on4
       - --enable-decoder=mp3on4float
+      - --enable-decoder=mpeg1video
+      - --enable-decoder=mpeg2video
       - --enable-decoder=mpeg4
       - --enable-decoder=msmpeg4v2
       - --enable-decoder=msmpeg4v3
@@ -235,23 +267,16 @@ parts:
       - --enable-decoder=pcm_f32le
       - --enable-decoder=pcm_f64be
       - --enable-decoder=pcm_f64le
-      - --enable-decoder=pcm_lxf
       - --enable-decoder=pcm_mulaw
       - --enable-decoder=pcm_s16be
-      - --enable-decoder=pcm_s16be_planar
       - --enable-decoder=pcm_s16le
-      - --enable-decoder=pcm_s16le_planar
       - --enable-decoder=pcm_s24be
-      - --enable-decoder=pcm_s24daud
       - --enable-decoder=pcm_s24le
-      - --enable-decoder=pcm_s24le_planar
       - --enable-decoder=pcm_s32be
       - --enable-decoder=pcm_s32le
-      - --enable-decoder=pcm_s32le_planar
       - --enable-decoder=pcm_s64be
       - --enable-decoder=pcm_s64le
       - --enable-decoder=pcm_s8
-      - --enable-decoder=pcm_s8_planar
       - --enable-decoder=pcm_u16be
       - --enable-decoder=pcm_u16le
       - --enable-decoder=pcm_u24be
@@ -259,7 +284,6 @@ parts:
       - --enable-decoder=pcm_u32be
       - --enable-decoder=pcm_u32le
       - --enable-decoder=pcm_u8
-      - --enable-decoder=pcm_zork
       - --enable-decoder=vorbis
       - --enable-decoder=vp8
       - --enable-decoder=wavpack
@@ -276,39 +300,34 @@ parts:
       - --enable-filter=atempo
       - --enable-parser=aac
       - --enable-parser=aac_latm
+      - --enable-parser=ac3
       - --enable-parser=flac
       - --enable-parser=gif
       - --enable-parser=h264
       - --enable-parser=hevc
       - --enable-parser=mpeg4video
       - --enable-parser=mpegaudio
+      - --enable-parser=mpegvideo
       - --enable-parser=opus
       - --enable-parser=vorbis
       - --enable-demuxer=aac
       - --enable-demuxer=flac
       - --enable-demuxer=gif
-      - --enable-demuxer=h264
-      - --enable-demuxer=hevc
       - --enable-demuxer=matroska
-      - --enable-demuxer=m4v
       - --enable-demuxer=mov
       - --enable-demuxer=mp3
       - --enable-demuxer=ogg
       - --enable-demuxer=wav
       - --enable-muxer=mp4
-      - --enable-muxer=ogg
       - --enable-muxer=opus
       - --enable-muxer=wav
       - --enable-muxer=webm
     override-pull: |
       craftctl default
       find $CRAFT_STAGE/patches/ffmpeg -type f -name '*.patch' -print0 | sort -z | xargs -r0 git apply -v
-      sed -i 's/disable ffnvcodec cuvid nvdec nvenc/:/g' configure
-    override-build: |
-      craftctl default
-      sed -i 's,^\(libdir\|includedir\)=/usr/,\1=${prefix}/,' "$CRAFT_PART_INSTALL/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/pkgconfig"/lib*.pc
     prime: [-./*]
     after:
+      - dav1d
       - nv-codec-headers
       - patches
 
@@ -358,24 +377,6 @@ parts:
       - -DALSOFT_BACKEND_PIPEWIRE=OFF
     prime: [-./*]
 
-  openssl:
-    source: https://github.com/openssl/openssl.git
-    source-depth: 1
-    source-tag: openssl-3.5.9
-    plugin: make
-    build-packages:
-      - perl
-    override-build: |
-      sed -i 's/$cmd $cmdflags -c -o/$cmd $cmdflags -g0 -c -o/' Configurations/unix-Makefile.tmpl
-      ./config \
-        --prefix=/usr \
-        --openssldir=/etc/ssl \
-        --libdir=lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR \
-        no-shared no-tests no-dso
-      make -j"${CRAFT_PARALLEL_BUILD_COUNT}"
-      make DESTDIR="$CRAFT_PART_INSTALL" install_sw
-    prime: [-./*]
-
   nv-codec-headers:
     source: https://github.com/FFmpeg/nv-codec-headers.git
     source-depth: 1
@@ -399,6 +400,8 @@ parts:
       - qtwayland
     plugin: cmake
     build-packages:
+      - libgl-dev
+      - libssl-dev
       - libxcb-cursor-dev
       - libxcb-glx0-dev
       - libxcb-icccm4-dev
@@ -419,7 +422,6 @@ parts:
       - -DINSTALL_LIBDIR=/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR
       - -DBUILD_SHARED_LIBS=OFF
       - -DQT_QPA_PLATFORMS="wayland;xcb"
-      - -DFEATURE_brotli=OFF
       - -DFEATURE_eglfs=OFF
       - -DINPUT_openssl=linked
     override-pull: |
@@ -431,7 +433,6 @@ parts:
     prime: [-./*]
     after:
       - mozjpeg
-      - openssl
       - patches
 
   rnnoise:
@@ -459,6 +460,7 @@ parts:
     plugin: cmake
     build-packages:
       - gperf
+      - libssl-dev
     cmake-generator: Ninja
     cmake-parameters:
       - -DCMAKE_BUILD_TYPE=Release
@@ -466,8 +468,6 @@ parts:
       - -DCMAKE_INSTALL_LIBDIR=lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR
       - -DTD_E2E_ONLY=ON
     prime: [-./*]
-    after:
-      - openssl
 
   tdesktop_rust:
     source: ''
@@ -522,14 +522,15 @@ parts:
   webrtc:
     source: https://github.com/desktop-app/tg_owt.git
     source-depth: 1
-    source-commit: 642ddb107b42da7c8d152401b71cd429475e5266
+    source-commit: a9d098a8f126dff818889d56f4241d7d2aaac9c1
     plugin: cmake
     build-environment:
-      - PKG_CONFIG_PATH: $CRAFT_STAGE/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}
+      - CXXFLAGS: ${CXXFLAGS:+$CXXFLAGS }-include /usr/include/c++/$(c++ -dumpversion)/math.h
     build-packages:
       - libopenh264-dev
       - libopus-dev
       - libpipewire-0.3-dev
+      - libssl-dev
       - libvpx-dev
     cmake-generator: Ninja
     cmake-parameters:
@@ -539,4 +540,3 @@ parts:
     after:
       - ffmpeg
       - mozjpeg
-      - openssl

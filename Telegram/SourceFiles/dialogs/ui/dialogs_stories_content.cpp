@@ -28,6 +28,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "info/stories/info_stories_widget.h"
 #include "info/info_controller.h"
 #include "info/info_memento.h"
+#include "main/main_app_config.h"
 #include "main/main_session.h"
 #include "media/stories/media_stories_post.h"
 #include "media/stories/media_stories_stealth.h"
@@ -51,13 +52,17 @@ public:
 	[[nodiscard]] Content next();
 
 private:
-	void applyUploads(Content &result);
+	using Userpics = base::flat_map<
+		not_null<PeerData*>,
+		std::shared_ptr<Ui::DynamicImage>>;
 
+	[[nodiscard]] std::shared_ptr<Ui::DynamicImage> userpic(
+		not_null<PeerData*> peer,
+		Userpics &used) const;
+	void applyUploads(Content &result, Userpics &userpics);
 	const not_null<Data::Stories*> _data;
 	const Data::StorySourcesList _list;
-	base::flat_map<
-		not_null<PeerData*>,
-		std::shared_ptr<Ui::DynamicImage>> _userpics;
+	Userpics _userpics;
 
 };
 
@@ -70,46 +75,65 @@ Content State::next() {
 	const auto &sources = _data->sources(_list);
 	auto result = Content{ .total = int(sources.size()) };
 	result.elements.reserve(sources.size());
-	auto userpics = base::flat_map<
-		not_null<PeerData*>,
-		std::shared_ptr<Ui::DynamicImage>>();
+	auto userpics = Userpics();
 	userpics.reserve(sources.size());
 	for (const auto &info : sources) {
 		const auto source = _data->source(info.id);
 		Assert(source != nullptr);
 
-		auto userpic = std::shared_ptr<Ui::DynamicImage>();
 		const auto peer = source->peer;
-		if (const auto i = _userpics.find(peer); i != end(_userpics)) {
-			userpic = i->second;
-		} else {
-			userpic = Ui::MakeUserpicThumbnail(peer, true);
-		}
-		userpics.emplace(peer, userpic);
-		result.elements.push_back({
-			.id = uint64(peer->id.value),
-			.name = peer->shortName(),
-			.thumbnail = std::move(userpic),
-			.count = info.count,
-			.unreadCount = info.unreadCount,
-			.hasVideoStream = info.hasVideoStream ? 1U : 0U,
-			.skipSmall = peer->isSelf() ? 1U : 0U,
-			.mine = peer->isSelf() ? 1U : 0U,
-			.mineUnread = (peer->isSelf()
-				&& !source->ids.empty()
-				&& source->ids.back().id > _data->viewedSelfTill())
-				? 1U
-				: 0U,
-		});
+		result.elements.push_back(
+			{
+				.id = uint64(peer->id.value),
+				.name = peer->shortName(),
+				.thumbnail = userpic(peer, userpics),
+				.count = info.count,
+				.unreadCount = info.unreadCount,
+				.hasVideoStream = info.hasVideoStream
+					? 1U
+					: 0U,
+				.skipSmall = peer->isSelf() ? 1U : 0U,
+				.mine = peer->isSelf() ? 1U : 0U,
+				.mineUnread = (peer->isSelf()
+					&& !source->ids.empty()
+					&& source->ids.back().id
+						> _data->viewedSelfTill())
+					? 1U
+					: 0U,
+			});
 	}
 	if (_list == Data::StorySourcesList::NotHidden) {
-		applyUploads(result);
+		applyUploads(result, userpics);
+		const auto self = _data->session().user();
+		result.placeMyStoryFirst(Media::Stories::CanPostStory(self)
+			? Fn<Element()>([&] {
+				return Element{
+					.id = uint64(self->id.value),
+					.name = tr::lng_stories_my_name(
+						tr::now),
+					.thumbnail = userpic(self, userpics),
+					.skipSmall = 1U,
+					.mine = 1U,
+				};
+			})
+			: nullptr);
 	}
 	_userpics = std::move(userpics);
 	return result;
 }
 
-void State::applyUploads(Content &result) {
+std::shared_ptr<Ui::DynamicImage> State::userpic(
+		not_null<PeerData*> peer,
+		Userpics &used) const {
+	const auto i = _userpics.find(peer);
+	return used.emplace(
+		peer,
+		(i != end(_userpics))
+			? i->second
+			: Ui::MakeUserpicThumbnail(peer, true)).first->second;
+}
+
+void State::applyUploads(Content &result, Userpics &userpics) {
 	const auto &uploads = _data->session().api().stories().uploads();
 	for (const auto &upload : uploads) {
 		const auto peer = upload.peer;
@@ -126,26 +150,23 @@ void State::applyUploads(Content &result) {
 			i->uploadProgress = progress;
 			continue;
 		}
-		auto userpic = std::shared_ptr<Ui::DynamicImage>();
-		if (const auto j = _userpics.find(peer); j != end(_userpics)) {
-			userpic = j->second;
-		} else {
-			userpic = Ui::MakeUserpicThumbnail(peer, true);
-			_userpics.emplace(peer, userpic);
-		}
-		result.elements.insert(begin(result.elements), {
-			.id = id,
-			.name = (peer->isSelf()
-				? tr::lng_story_my_story(tr::now)
-				: peer->shortName()),
-			.thumbnail = std::move(userpic),
-			.skipSmall = peer->isSelf() ? 1U : 0U,
-			.mine = peer->isSelf() ? 1U : 0U,
-			.mineUnread = 1U,
-			.uploading = 1,
-			.uploadFailed = upload.error.isEmpty() ? 0U : 1U,
-			.uploadProgress = progress,
-		});
+		result.elements.insert(
+			begin(result.elements),
+			{
+				.id = id,
+				.name = (peer->isSelf()
+					? tr::lng_story_my_story(tr::now)
+					: peer->shortName()),
+				.thumbnail = userpic(peer, userpics),
+				.skipSmall = peer->isSelf() ? 1U : 0U,
+				.mine = peer->isSelf() ? 1U : 0U,
+				.mineUnread = 1U,
+				.uploading = 1,
+				.uploadFailed = upload.error.isEmpty()
+					? 0U
+					: 1U,
+				.uploadProgress = progress,
+			});
 		++result.total;
 	}
 }
@@ -164,6 +185,7 @@ rpl::producer<Content> ContentForSession(
 		) | rpl::then(rpl::merge(
 			stories->sourcesChanged(list),
 			session->api().stories().uploadsChanges(),
+			session->appConfig().refreshed(),
 			stories->viewedSelfTillChanged()
 		)) | rpl::on_next([=] {
 			consumer.put_next(state->next());

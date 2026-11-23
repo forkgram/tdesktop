@@ -69,6 +69,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "apiwrap.h"
 #include "chat_helpers/message_field.h"
 #include "core/application.h"
+#include "core/click_handler_types.h"
 #include "core/update_checker.h"
 #include "core/shortcuts.h"
 #include "window/window_columns.h"
@@ -510,7 +511,7 @@ Widget::Widget(
 	rpl::single(rpl::empty) | rpl::then(
 		session().domain().local().localPasscodeChanged()
 	) | rpl::on_next([=] {
-		updateLockUnlockVisibility();
+		updateTopBarActionsVisibility(anim::type::instant);
 	}, lifetime());
 	const auto lockUnlock = _lockUnlock->entity();
 	lockUnlock->setAccessibleName(tr::lng_shortcuts_lock(tr::now));
@@ -521,6 +522,25 @@ Widget::Widget(
 		Core::App().maybeLockByPasscode();
 		lockUnlock->setIconOverride(nullptr);
 	});
+	auto fillPasscodeMenu = [=](not_null<Ui::PopupMenu*> menu) {
+		auto openPasscodeSettings = [=] {
+			auto context = ClickHandlerContext{
+				.sessionWindow = base::make_weak(controller),
+			};
+			Core::App().openLocalUrl(
+				u"tg://settings/privacy?"
+				u"highlight=security/passcode"_q,
+				QVariant::fromValue(std::move(context)));
+		};
+		menu->addAction(
+			tr::lng_settings_passcode_title(tr::now),
+			std::move(openPasscodeSettings),
+			&st::menuIconLock);
+	};
+	Ui::SetupButtonContextMenu(
+		lockUnlock,
+		&st::popupMenuWithIcons,
+		std::move(fillPasscodeMenu));
 
 	setupMainMenuToggle();
 	setupShortcuts();
@@ -1637,12 +1657,12 @@ void Widget::setupStories() {
 					+ st::dialogsRowHeight))) {
 			storiesToggleExplicitExpand(false);
 		}
-		updateLockUnlockPosition();
+		updateTopBarActionsPosition();
 	}, lifetime());
 
 	_stories->collapsedGeometryChanged(
 	) | rpl::on_next([=] {
-		updateLockUnlockPosition();
+		updateTopBarActionsPosition();
 		updateStoriesTitleShown();
 	}, lifetime());
 
@@ -1697,7 +1717,7 @@ void Widget::setupStories() {
 	}, lifetime());
 
 	_stories->widthValue() | rpl::on_next([=] {
-		updateLockUnlockPosition();
+		updateTopBarActionsPosition();
 	}, lifetime());
 }
 
@@ -1710,28 +1730,40 @@ void Widget::setupAddStory() {
 			Media::Stories::PostStory(controller(), self);
 		}
 	});
-	Ui::SetupButtonContextMenu(button, &st::popupMenuWithIcons, [=](
-			not_null<Ui::PopupMenu*> menu) {
-		menu->addAction(tr::lng_translate_menu_hide(tr::now), [=] {
-			Stories::SetAddStoryButtonHidden(true);
-			updateAddStoryVisibility(anim::type::normal);
-		}, &st::menuIconStealth);
-		menu->setForcedOrigin(Ui::PanelAnimation::Origin::TopRight);
-	}, [=](not_null<Ui::PopupMenu*> menu) {
-		const auto extend = Ui::BoxShadow::ExtendFor(menu->st().shadow);
-		return Ui::PopupMenu::ConstrainToParentScreen(
-			menu,
-			button->mapToGlobal(QPoint(
+	Ui::SetupButtonContextMenu(
+		button,
+		&st::popupMenuWithIcons,
+		[=](not_null<Ui::PopupMenu*> menu) {
+			menu->addAction(
+				tr::lng_translate_menu_hide(tr::now),
+				[=] {
+					Stories::SetAddStoryButtonHidden(
+						true);
+					updateTopBarActionsVisibility(
+						anim::type::normal);
+				},
+				&st::menuIconStealth);
+			menu->setForcedOrigin(
+				Ui::PanelAnimation::Origin::TopRight);
+		},
+		[=](not_null<Ui::PopupMenu*> menu) {
+			const auto extend
+				= Ui::BoxShadow::ExtendFor(menu->st().shadow);
+			const auto skip = st::dialogsAddStoryMenuSkip;
+			const auto anchor = QPoint(
 				button->width() + extend.right(),
-				button->height() + st::dialogsAddStoryMenuSkip)));
-	});
+				button->height() + skip);
+			return Ui::PopupMenu::ConstrainToParentScreen(
+				menu,
+				button->mapToGlobal(anchor));
+		});
 
 	rpl::merge(
 		session().data().stories().sourcesChanged(
 			Data::StorySourcesList::NotHidden),
 		session().appConfig().refreshed()
 	) | rpl::on_next([=] {
-		updateAddStoryVisibility(anim::type::normal);
+		updateTopBarActionsVisibility(anim::type::normal);
 	}, _addStory->lifetime());
 }
 
@@ -1845,8 +1877,16 @@ void Widget::fullSearchRefreshOn(rpl::producer<> events) {
 
 void Widget::updateControlsVisibility(bool fast) {
 	updateLoadMoreChatsVisibility();
+	if (_suggestions) {
+		_suggestions->setVisible(!_showAnimation);
+	}
+	for (const auto &suggestions : _hidingSuggestions) {
+		suggestions->setVisible(!_showAnimation);
+	}
 	_scroll->setVisible(!suggestionsCoverList() && _hidingSuggestions.empty());
-	updateStoriesVisibility();
+	updateStoriesVisibility(fast
+		? anim::type::instant
+		: anim::type::normal);
 	if ((_openedFolder || _openedForum || _openedCommunity)
 		&& _searchHasFocus) {
 		setInnerFocus();
@@ -1881,12 +1921,6 @@ void Widget::updateControlsVisibility(bool fast) {
 			_forumReportBar->show();
 		}
 	} else {
-		updateLockUnlockVisibility(fast
-			? anim::type::instant
-			: anim::type::normal);
-		updateAddStoryVisibility(fast
-			? anim::type::instant
-			: anim::type::normal);
 		updateJumpToDateVisibility(fast);
 		updateSearchFromVisibility(fast);
 	}
@@ -1903,36 +1937,29 @@ void Widget::updateControlsVisibility(bool fast) {
 	if (_childList && _searchHasFocus) {
 		setInnerFocus();
 	}
-	updateLockUnlockPosition();
+	updateTopBarActionsPosition();
 }
 
-void Widget::updateLockUnlockPosition() {
-	if (_lockUnlock->isHidden()) {
-		return;
-	}
-	const auto stories = (_stories && !_stories->isHidden())
+void Widget::updateTopBarActionsPosition() {
+	const auto stories
+		= (_stories && !_stories->empty() && !_stories->isHidden())
 		? _stories->collapsedGeometryCurrent()
 		: Stories::List::CollapsedGeometry();
-	const auto simple = _search->x() + _search->width();
-	const auto right = stories.geometry.isEmpty()
-		? simple
-		: anim::interpolate(stories.geometry.x(), simple, stories.expanded);
-	_lockUnlock->move(
-		right - _lockUnlock->width(),
-		st::dialogsFilterPadding.y());
-}
+	const auto searchRight = _search->x() + _search->width();
+	const auto lockRight = stories.geometry.isEmpty()
+		? searchRight
+		: anim::interpolate(
+			stories.geometry.x(),
+			searchRight,
+			stories.expanded);
+	const auto lockLeft = lockRight - _lockUnlock->width();
+	_lockUnlock->move(lockLeft, st::dialogsFilterPadding.y());
 
-void Widget::updateAddStoryPosition() {
-	if (_addStory->isHidden()) {
-		return;
-	}
-	const auto right = _search->x()
-		+ _search->width()
-		- (_lockUnlock->toggled()
-			? _lockUnlock->width()
-			: st::dialogsAddStoryRight);
+	const auto storyRight = session().domain().local().hasLocalPasscode()
+		? lockLeft
+		: searchRight;
 	_addStory->move(
-		right - _addStory->width(),
+		storyRight - st::dialogsAddStoryRight - _addStory->width(),
 		_search->y() + (_search->height() - _addStory->height()) / 2);
 }
 
@@ -2038,7 +2065,9 @@ bool Widget::searchActive() const {
 void Widget::updateSuggestions(anim::type animated) {
 	const auto suggest = (searchActive() || _searchSuggestionsLocked)
 		&& !_searchState.inChat;
-	if (anim::Disabled() || !session().data().chatsListLoaded()) {
+	if (_showAnimation
+		|| anim::Disabled()
+		|| !session().data().chatsListLoaded()) {
 		animated = anim::type::instant;
 	}
 	if (!suggest && _suggestions) {
@@ -2165,6 +2194,9 @@ void Widget::updateSuggestions(anim::type animated) {
 		_suggestions->show(
 			tabsOnly ? anim::type::instant : animated,
 			[=] { stopWidthAnimation(); });
+		if (_showAnimation) {
+			_suggestions->setVisible(false);
+		}
 		if (!tabsOnly) {
 			_scroll->hide();
 		}
@@ -2806,21 +2838,13 @@ void Widget::stopWidthAnimation() {
 	update();
 }
 
-void Widget::updateStoriesVisibility() {
-	updateLockUnlockVisibility(anim::type::normal);
-	updateAddStoryVisibility(anim::type::normal);
+void Widget::updateStoriesVisibility(anim::type animated) {
+	updateTopBarActionsVisibility(animated);
 	if (!_stories) {
 		return;
 	}
 	const auto widthAnimation = !_widthAnimationCache.isNull();
-	const auto suggestionsAnimation = widthAnimation
-		&& !_openedFolder
-		&& (!_suggestions || !_hidingSuggestions.empty());
-	const auto hiddenAnimated = _searchHasFocus
-		|| _searchSuggestionsLocked
-		|| !_searchState.query.isEmpty()
-		|| _searchState.inChat
-		|| suggestionsAnimation
+	const auto hiddenAnimated = searchHidesTopBarContent()
 		|| (_openedFolder
 			&& _subsectionTopBar
 			&& _subsectionTopBar->searchMode());
@@ -2829,7 +2853,8 @@ void Widget::updateStoriesVisibility() {
 	const auto hiddenInstant = _showAnimation
 		|| _openedForum
 		|| _openedCommunity
-		|| (widthAnimation && !suggestionsAnimation)
+		|| showingSuggestionsDuringWidthAnimation()
+		|| (widthAnimation && _openedFolder)
 		|| _childList
 		|| _stories->empty()
 		|| (Core::App().settings().fork().archivedStoriesAreHidden()
@@ -2860,7 +2885,7 @@ void Widget::updateStoriesVisibility() {
 		if (_aboveScrollAdded > 0 && _updateScrollGeometryCached) {
 			_updateScrollGeometryCached();
 		}
-		updateLockUnlockPosition();
+		updateTopBarActionsPosition();
 	}
 	updateStoriesTitleShown();
 }
@@ -2919,6 +2944,12 @@ void Widget::startSlideAnimation(
 		QPixmap oldContentCache,
 		QPixmap newContentCache,
 		Window::SlideDirection direction) {
+	if (_suggestions) {
+		_suggestions->setVisible(false);
+	}
+	for (const auto &suggestions : _hidingSuggestions) {
+		suggestions->setVisible(false);
+	}
 	_scroll->hide();
 	if (_stories) {
 		_stories->setToggledHidden(true, false);
@@ -3343,6 +3374,8 @@ void Widget::searchTopics() {
 		MTP_flags(MTPmessages_GetForumTopics::Flag::f_q),
 		_openedForum->peer()->input(),
 		MTP_string(_topicSearchQuery),
+		MTPlong(), // icon_emoji_id
+		MTPBool(), // closed
 		MTP_int(_topicSearchOffsetDate),
 		MTP_int(_topicSearchOffsetId),
 		MTP_int(_topicSearchOffsetTopicId),
@@ -4329,7 +4362,6 @@ bool Widget::applySearchState(SearchState state) {
 	}
 	_searchWithPostsPreview = computeSearchWithPostsPreview();
 	if (queryChanged) {
-		updateLockUnlockVisibility(anim::type::normal);
 		updateLoadMoreChatsVisibility();
 	}
 	if (inChatChanged) {
@@ -4342,7 +4374,7 @@ bool Widget::applySearchState(SearchState state) {
 	}
 	updateJumpToDateVisibility();
 	updateSearchFromVisibility();
-	updateLockUnlockPosition();
+	updateTopBarActionsPosition();
 
 	const auto searchCleared = state.query.isEmpty()
 		&& !state.fromPeer
@@ -4545,67 +4577,53 @@ void Widget::resizeEvent(QResizeEvent *e) {
 	}
 }
 
-void Widget::updateLockUnlockVisibility(anim::type animated) {
-	if (_showAnimation) {
-		return;
-	}
-	const auto widthAnimation = !_widthAnimationCache.isNull();
-	const auto suggestionsAnimation = widthAnimation
-		&& (!_suggestions || !_hidingSuggestions.empty());
-	// Show verified locking; the layout path only reads the cache.
-	const auto hiddenInstant = _showAnimation
-		|| _openedForum
-		|| (widthAnimation && !suggestionsAnimation)
-		|| _childList
-		|| !session().domain().local().hasLocalPasscode()
-		|| (_stories
-			&& !_stories->empty()
-			&& _scroll->position().overscroll < -st::dialogsFilterSkip);
-	const auto hiddenAnimated = _searchHasFocus
-		|| _searchSuggestionsLocked
-		|| !_searchState.query.isEmpty()
-		|| _searchState.inChat
-		|| suggestionsAnimation;
-	const auto hidden = hiddenInstant || hiddenAnimated;
-	const auto changed = (_lockUnlock->toggled() == hidden);
-	_lockUnlock->toggle(
-		!hidden,
-		hiddenInstant ? anim::type::instant : animated);
-	if (changed) {
-		if (!hidden) {
-			updateLockUnlockPosition();
-		}
-		updateControlsGeometry();
-	}
-}
-
-void Widget::updateAddStoryVisibility(anim::type animated) {
-	if (_showAnimation) {
-		return;
-	}
-	const auto showingSuggestions = !_widthAnimationCache.isNull()
+bool Widget::showingSuggestionsDuringWidthAnimation() const {
+	return !_widthAnimationCache.isNull()
 		&& _suggestions
 		&& _hidingSuggestions.empty();
-	const auto hiddenInstant = !_stories
-		|| _openedForum
-		|| showingSuggestions
-		|| _childList
-		|| !_stories->empty()
+}
+
+bool Widget::searchHidesTopBarContent() const {
+	return _searchHasFocus
+		|| _searchSuggestionsLocked
+		|| !_searchState.query.isEmpty()
+		|| _searchState.inChat;
+}
+
+void Widget::updateTopBarActionsVisibility(anim::type animated) {
+	if (_showAnimation) {
+		return;
+	}
+	const auto hiddenInstant = _openedForum
+		|| showingSuggestionsDuringWidthAnimation()
+		|| _childList;
+	const auto hiddenAnimated = searchHidesTopBarContent();
+	const auto hasStories = _stories && !_stories->empty();
+	const auto lockHiddenInstant = hiddenInstant
+		|| !session().domain().local().hasLocalPasscode()
+		|| (hasStories
+			&& _scroll->position().overscroll
+				< -st::dialogsFilterSkip);
+	const auto storyHiddenInstant = hiddenInstant
+		|| !_stories
+		|| hasStories
 		|| !session().data().stories().sourcesKnown(
 			Data::StorySourcesList::NotHidden)
 		|| !Media::Stories::CanPostStory(session().user())
 		|| Stories::AddStoryButtonHidden();
-	const auto hiddenAnimated = _searchHasFocus
-		|| _searchSuggestionsLocked
-		|| !_searchState.query.isEmpty()
-		|| _searchState.inChat;
-	const auto hidden = hiddenInstant || hiddenAnimated;
-	if (_addStory->toggled() == hidden) {
-		_addStory->toggle(
-			!hidden,
-			hiddenInstant ? anim::type::instant : animated);
-		updateAddStoryPosition();
-	}
+	const auto lockWaitsForSuggestions = storyHiddenInstant
+		&& !hasStories
+		&& !_widthAnimationCache.isNull();
+
+	_lockUnlock->toggle(
+		!lockHiddenInstant
+			&& !hiddenAnimated
+			&& !lockWaitsForSuggestions,
+		lockHiddenInstant ? anim::type::instant : animated);
+	_addStory->toggle(
+		!storyHiddenInstant && !hiddenAnimated,
+		storyHiddenInstant ? anim::type::instant : animated);
+	updateTopBarActionsPosition();
 }
 
 void Widget::updateLoadMoreChatsVisibility() {
@@ -4752,8 +4770,7 @@ void Widget::updateControlsGeometry() {
 			st::lineWidth);
 	}
 
-	updateLockUnlockPosition();
-	updateAddStoryPosition();
+	updateTopBarActionsPosition();
 
 	auto bottomSkip = 0;
 	const auto putBottomButton = [&](auto &button) {

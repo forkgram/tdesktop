@@ -84,11 +84,13 @@ using InlineChosen = InlineBots::ResultSelected;
 enum class TabbedSelectorMode {
 	Full,
 	EmojiOnly,
+	UnicodeEmojiOnly,
 	CustomEmojiOnly,
 	CustomEmojiAndGifs,
 	StickersOnly,
 	StickersAndGifs,
 	MediaEditor,
+	StoriesEditor,
 	EmojiStatus,
 	ChannelStatus,
 	BackgroundEmoji,
@@ -146,6 +148,8 @@ public:
 	[[nodiscard]] Main::Session &session() const;
 	[[nodiscard]] PauseReason level() const;
 
+	[[nodiscard]] bool hasEmojiTab() const;
+	[[nodiscard]] bool hasGifsTab() const;
 	[[nodiscard]] rpl::producer<EmojiChosen> emojiChosen() const;
 	[[nodiscard]] rpl::producer<FileChosen> customEmojiChosen() const;
 	[[nodiscard]] rpl::producer<FileChosen> fileChosen() const;
@@ -264,9 +268,7 @@ private:
 	bool full() const;
 	bool mediaEditor() const;
 	bool tabbed() const;
-	bool hasEmojiTab() const;
 	bool hasStickersTab() const;
-	bool hasGifsTab() const;
 	bool hasMasksTab() const;
 	Tab createTab(SelectorTab type, int index);
 

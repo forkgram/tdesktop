@@ -43,7 +43,7 @@ Version **1.8.15** was the last that supports older systems
 
 ## Third-party
 
-* Qt 6 ([LGPL](http://doc.qt.io/qt-6/lgpl.html)) and Qt 5.15 ([LGPL](http://doc.qt.io/qt-5/lgpl.html)) slightly patched
+* Qt 6 ([LGPL](http://doc.qt.io/qt-6/lgpl.html)) slightly patched
 * OpenSSL 3.2.1 ([Apache License 2.0](https://openssl-library.org/source/license/apache-license-2.0.txt))
 * WebRTC ([New BSD License](https://github.com/desktop-app/tg_owt/blob/master/LICENSE))
 * zlib ([zlib License](http://www.zlib.net/zlib_license.html))
@@ -69,12 +69,12 @@ Version **1.8.15** was the last that supports older systems
 * twidget ([BSD 3-Clause License](https://github.com/TelegramMessenger/twidget/blob/main/LICENSE))
 * litehtml ([BSD 3-Clause License](https://github.com/litehtml/litehtml/blob/master/LICENSE))
 * Gumbo ([Apache License 2.0](https://github.com/google/gumbo-parser/blob/master/COPYING))
-* QuickJS-ng ([MIT License](https://github.com/quickjs-ng/quickjs/blob/master/LICENSE))
+* Nova ([Mozilla Public License 2.0](https://github.com/trynova/nova/blob/main/LICENSE.md))
 * FrequencyWords by Hermit Dave ([Creative Commons Attribution-ShareAlike 4.0](https://creativecommons.org/licenses/by-sa/4.0/))
 
 ## Build instructions
 
-* [Windows (32-bit and 64-bit)][win]
+* [Windows][win]
 * [macOS][mac]
 * [GNU/Linux using Docker][linux]
 

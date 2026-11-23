@@ -253,7 +253,7 @@ jobs:
 
       - name: Compress.
         if: (github.event_name == 'release')
-        run: tar -cJvf Forkgram.tar.xz -C out/MinSizeRel Forkgram Updater
+        run: tar -cJvf Forkgram.tar.xz -C out/MinSizeRel Forkgram Updater TelegramHelpers/TelegramWidgetHelper
 
       - name: Pack updater files.
         if: env.LEGACY_UPDATE == 'true'
@@ -263,7 +263,7 @@ jobs:
           BEFORE=$(mktemp)
           AFTER=$(mktemp)
           ls -1 tlinuxupd* 2>/dev/null | sort > "$BEFORE" || true
-          ./Packer -path Forkgram -path Updater -version "$verPacker"
+          ./Packer -path Forkgram -path Updater -path TelegramHelpers/TelegramWidgetHelper -version "$verPacker"
           ls -1 tlinuxupd* 2>/dev/null | sort > "$AFTER" || true
           UPDATE_FILE=$(comm -13 "$BEFORE" "$AFTER" | tail -n 1)
           if [ -z "$UPDATE_FILE" ]; then

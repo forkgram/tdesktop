@@ -206,6 +206,7 @@ VideoEditor::VideoEditor(
 : RpWidget(parent)
 , _path(descriptor.path)
 , _content(descriptor.content)
+, _preview(std::move(descriptor.preview))
 , _dimensions(descriptor.dimensions)
 , _duration(std::max(descriptor.duration, crl::time(1)))
 , _data(descriptor.data)
@@ -284,6 +285,7 @@ void VideoEditor::setupTimeline() {
 		VideoTimelineDescriptor{
 			.path = _path,
 			.content = _content,
+			.preview = _preview,
 			.dimensions = _dimensions,
 			.duration = _duration,
 			.maxDuration = _data.maxDuration,
@@ -662,7 +664,12 @@ void VideoEditor::setupStreaming() {
 		}
 	}, lifetime());
 
+	_player->setPaused(true);
 	_player->start();
+}
+
+void VideoEditor::startPlayback() {
+	_player->setPaused(_userPaused);
 }
 
 void VideoEditor::setupTapToPause() {
@@ -991,7 +998,8 @@ void VideoEditor::paint(QPainter &p) {
 		return;
 	}
 	const auto frame = _player->frame(frameRequestSize());
-	if (frame.isNull()) {
+	const auto &image = frame.isNull() ? _preview : frame;
+	if (image.isNull()) {
 		return;
 	}
 	auto hq = PainterHighQualityEnabler(p);
@@ -1000,7 +1008,7 @@ void VideoEditor::paint(QPainter &p) {
 		p.setClipRect(_canvasRect);
 	}
 	p.setTransform(_frameMatrix);
-	p.drawImage(_frameRect, frame);
+	p.drawImage(_frameRect, image);
 	p.resetTransform();
 	if (_data.canvas) {
 		p.setClipping(false);

@@ -692,6 +692,7 @@ void ShowSelectGiftBox(
 
 	const auto session = &controller->session();
 	const auto state = std::make_shared<State>();
+	const auto resaleOptions = LookupResaleGiftsOptions(session->user(), true);
 
 	const auto make = [=](not_null<GenericBox*> box) {
 		box->setTitle(tr::lng_gift_craft_select_title());
@@ -721,21 +722,20 @@ void ShowSelectGiftBox(
 			selected,
 			got);
 
-		if (const auto count = state->resale.count) {
+		if (ShouldShowResaleGifts(resaleOptions, state->resale)) {
 			AddSubsectionTitle(
 				box->verticalLayout(),
 				tr::lng_gift_craft_select_market(
 					lt_count,
-					rpl::single(count * 1.)));
+					rpl::single(state->resale.count * 1.)));
 
 			AddResaleGiftsList(
 				controller,
 				session->user(),
 				box->verticalLayout(),
 				state->resale,
-				nullptr,
-				got,
-				true);
+				resaleOptions,
+				got);
 		}
 
 		box->addButton(tr::lng_box_ok(), [=] {
@@ -767,7 +767,7 @@ void ShowSelectGiftBox(
 	state->resaleLifetime = Data::ResaleGiftsSlice(
 		session,
 		giftId,
-		{ .forCraft = true }
+		resaleOptions.filter
 	) | rpl::on_next([=](Data::ResaleGiftsDescriptor &&info) {
 		state->resaleLifetime.destroy();
 

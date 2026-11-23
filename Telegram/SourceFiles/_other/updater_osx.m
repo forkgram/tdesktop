@@ -59,6 +59,7 @@ void RemoveQuarantineFromBundle(NSString *path) {
 	RemoveQuarantineAttribute(path);
 	RemoveQuarantineAttribute([path stringByAppendingFormat:@"/Contents/MacOS/%@", executable]);
 	RemoveQuarantineAttribute([path stringByAppendingString:@"/Contents/Helpers/crashpad_handler"]);
+	RemoveQuarantineAttribute([path stringByAppendingString:@"/Contents/Helpers/TelegramWidgetHelper"]);
 	RemoveQuarantineAttribute([path stringByAppendingString:@"/Contents/Frameworks/Updater"]);
 }
 

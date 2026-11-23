@@ -20,6 +20,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_session.h"
 #include "data/stickers/data_stickers.h"
 #include "editor/controllers/controllers.h"
+#include "editor/editor_gif.h"
 #include "editor/editor_link_box.h"
 #include "editor/editor_message_render.h"
 #include "editor/editor_message_source.h"
@@ -50,6 +51,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/boxes/confirm_box.h"
 #include "ui/chat/attach/attach_prepare.h"
 #include "ui/controls/location_picker.h"
+#include "ui/emoji_config.h"
 #include "ui/rect.h"
 #include "ui/ui_utility.h"
 
@@ -241,9 +243,24 @@ Paint::Paint(
 
 	if (controllers->stickersPanelController) {
 		using ShowRequest = StickersPanelController::ShowRequest;
+		const auto panel = controllers->stickersPanelController.get();
+		_scene->setTextEmojiPanel(panel->textEmojiPanel());
+		panel->textEmojiChosen() | rpl::on_next([=](EmojiPtr emoji) {
+			panel->hideTextEmojiPanel();
+			_scene->insertText(emoji->text());
+		}, lifetime());
+		_textEditing.changes() | rpl::filter([](bool editing) {
+			return !editing;
+		}) | rpl::on_next([=] {
+			panel->hideTextEmojiPanel();
+		}, lifetime());
 
 		controllers->stickersPanelController->setShowRequestChanges(
 			rpl::merge(
+				panel->emojiChosen(
+				) | rpl::map_to(ShowRequest::HideAnimated),
+				panel->gifChosen(
+				) | rpl::map_to(ShowRequest::HideAnimated),
 				controllers->stickersPanelController->stickerChosen(
 				) | rpl::map_to(ShowRequest::HideAnimated),
 				controllers->stickersPanelController->photoRequests(
@@ -264,6 +281,33 @@ Paint::Paint(
 			addMediaItem(std::make_shared<ItemSticker>(
 				document,
 				itemBaseData()));
+		}, lifetime());
+
+		panel->emojiChosen() | rpl::on_next([=](EmojiPtr emoji) {
+			const auto side = Ui::Emoji::GetSizeLarge();
+			auto image = QImage(
+				side,
+				side,
+				QImage::Format_ARGB32_Premultiplied);
+			image.setDevicePixelRatio(style::DevicePixelRatio());
+			image.fill(Qt::transparent);
+			{
+				auto p = QPainter(&image);
+				Ui::Emoji::Draw(p, emoji, side, 0, 0);
+			}
+			auto data = itemBaseData();
+			data.size /= 2;
+			addMediaItem(
+				std::make_shared<ItemImage>(
+					Ui::PixmapFromImage(std::move(image)),
+					data));
+		}, lifetime());
+		panel->gifChosen() | rpl::on_next([=](
+			not_null<DocumentData*> gif) {
+			auto addGif = [=](Storage::PhotoEditorMedia &&media) {
+				addMedia(std::move(media));
+			};
+			LoadGif(this, gif, std::move(addGif));
 		}, lifetime());
 
 		controllers->stickersPanelController->photoRequests(

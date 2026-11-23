@@ -296,6 +296,7 @@ Application::~Application() {
 
 	Shortcuts::Finish();
 
+	Tgw::Runtime::Finish();
 	Ui::Emoji::Clear();
 	Media::Clip::Finish();
 

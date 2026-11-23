@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/qt/qt_compare.h"
 #include "base/timer.h"
 #include "base/weak_ptr.h"
+#include "dialogs/ui/dialogs_stories_content.h"
 #include "ui/effects/animations.h"
 #include "ui/text/text_custom_emoji.h"
 #include "ui/widgets/menu/menu_add_action_callback.h"
@@ -24,40 +25,11 @@ struct DialogsStoriesList;
 
 namespace Ui {
 class PopupMenu;
-class DynamicImage;
 struct OutlineSegment;
 class ImportantTooltip;
 } // namespace Ui
 
 namespace Dialogs::Stories {
-
-struct Element {
-	uint64 id = 0;
-	QString name;
-	std::shared_ptr<Ui::DynamicImage> thumbnail;
-	uint32 count : 15 = 0;
-	uint32 unreadCount : 15 = 0;
-	uint32 hasVideoStream : 1 = 0;
-	uint32 skipSmall : 1 = 0;
-	uint32 mine : 1 = 0;
-	uint32 mineUnread : 1 = 0;
-	uint32 uploading : 1 = 0;
-	uint32 uploadFailed : 1 = 0;
-	uint32 uploadProgress : 7 = 0;
-
-	friend inline bool operator==(
-		const Element &a,
-		const Element &b) = default;
-};
-
-struct Content {
-	std::vector<Element> elements;
-	int total = 0;
-
-	friend inline bool operator==(
-		const Content &a,
-		const Content &b) = default;
-};
 
 struct ShowMenuRequest {
 	uint64 id = 0;
@@ -137,7 +109,10 @@ private:
 	};
 
 	void showContent(Content &&content);
-	void paintAddBadge(QPainter &p, uint64 id, const QRectF &userpic) const;
+	void paintAddBadge(
+		QPainter &p,
+		uint64 id,
+		const QRectF &userpic) const;
 	void updateUploadAnimation();
 	void stepUploadAnimation(crl::time now);
 	[[nodiscard]] float64 uploadShownProgress(uint64 id, crl::time now) const;

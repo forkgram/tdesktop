@@ -450,6 +450,9 @@ jobs:
           foreach ($name in @('Telegram.exe', 'Updater.exe')) {
             Copy-Item -LiteralPath (Join-Path $release $name) -Destination windows-build
           }
+          $helperDir = "modules\${env:MODULES_ARCH}"
+          New-Item -ItemType Directory -Path "windows-build\$helperDir" -Force | Out-Null
+          Copy-Item -LiteralPath "$release\$helperDir\TelegramWidgetHelper.exe" -Destination "windows-build\$helperDir"
           if ($env:WIN7_LAYER) {
             $modules = "modules\${env:MODULES_ARCH}\d3d"
             New-Item -ItemType Directory -Path "windows-build\$modules" -Force | Out-Null
@@ -491,6 +494,7 @@ jobs:
     env:
       TBUILD: ${{ github.workspace }}\TBuild
       REPO_NAME: tdesktop
+      MODULES_ARCH: ${{ matrix.arch == 'x64' && 'x64' || matrix.arch == 'arm64' && 'arm64' || 'x86' }}
       ISS_TARGET: ${{ matrix.arch == 'x64' && 'win64' || matrix.arch == 'arm64' && 'winarm' || 'win32' }}
       SETUP_PREFIX: ${{ matrix.arch == 'x64' && 'tsetup-x64' || matrix.arch == 'arm64' && 'tsetup-arm64' || 'tsetup' }}
 
@@ -551,8 +555,12 @@ jobs:
           if (-not (Test-Path (Join-Path $release 'Telegram.exe'))) {
             Write-Error "Telegram.exe is missing from $release"; exit 1
           }
-          $targets = @('Telegram.exe', 'Updater.exe') |
-            ForEach-Object { Join-Path $release $_ } | Where-Object { Test-Path $_ }
+          $helper = "modules\${env:MODULES_ARCH}\TelegramWidgetHelper.exe"
+          $targets = @('Telegram.exe', 'Updater.exe', $helper) |
+            ForEach-Object { Join-Path $release $_ }
+          foreach ($target in $targets) {
+            if (-not (Test-Path -LiteralPath $target)) { Write-Error "missing $target"; exit 1 }
+          }
 
           foreach ($target in $targets) {
             # Timestamping is what keeps a signature valid past certificate expiry.
@@ -692,7 +700,8 @@ jobs:
           Set-Location $release
 
           # Not $args: that is an automatic variable in PowerShell.
-          $packerArgs = @('-version', $env:AppVersion, '-path', 'Telegram.exe', '-path', 'Updater.exe')
+          $helper = "modules\${env:MODULES_ARCH}\TelegramWidgetHelper.exe"
+          $packerArgs = @('-version', $env:AppVersion, '-path', 'Telegram.exe', '-path', 'Updater.exe', '-path', $helper)
           if ($env:WIN7_LAYER) {
             $d3d = "modules\${env:MODULES_ARCH}\d3d\d3dcompiler_47.dll"
             if (-not (Test-Path $d3d)) { Write-Error "missing $d3d for ANGLE"; exit 1 }
@@ -719,6 +728,9 @@ jobs:
           New-Item -ItemType Directory -Path $portableDir -Force | Out-Null
 
           Copy-Item (Join-Path $release 'Telegram.exe') $portableDir
+          $helperDir = "modules\${env:MODULES_ARCH}"
+          New-Item -ItemType Directory -Path "$portableDir\$helperDir" -Force | Out-Null
+          Copy-Item -LiteralPath "$release\$helperDir\TelegramWidgetHelper.exe" -Destination "$portableDir\$helperDir"
           if ($env:WIN7_LAYER) {
             $d3d = Join-Path $release "modules\${env:MODULES_ARCH}\d3d\d3dcompiler_47.dll"
             if (-not (Test-Path $d3d)) { Write-Error "missing $d3d for ANGLE"; exit 1 }

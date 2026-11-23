@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "apiwrap.h"
 #include "boxes/premium_preview_box.h"
+#include "boxes/premium_story_limits_box.h"
 #include "boxes/send_story_box.h"
 #include "boxes/story_drafts_box.h"
 
@@ -26,7 +27,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_peer.h"
 #include "data/data_photo.h"
 #include "data/data_photo_media.h"
-#include "data/data_premium_limits.h"
 #include "data/data_session.h"
 #include "data/data_stories.h"
 #include "data/data_story.h"
@@ -55,7 +55,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/file_download_web.h"
 #include "storage/localimageloader.h"
 #include "storage/storage_media_prepare.h"
-#include "ui/boxes/confirm_box.h"
 #include "ui/chat/attach/attach_prepare.h"
 #include "ui/image/image.h"
 #include "ui/layers/generic_box.h"
@@ -129,17 +128,19 @@ void SetupStoryEditorClose(
 		const StoryEditorSetup &setup,
 		Fn<void()> close,
 		Fn<void()> saveDraft) {
-	raw->cancelRequests() | rpl::on_next([=] {
+	const auto cancel = [=] {
+		const auto periodChanged = !setup.preview
+			&& raw->period() != InitialPeriod(setup);
 		const auto changed = raw->edited()
 			|| (raw->caption() != setup.caption)
-			|| (raw->period() != InitialPeriod(setup));
+			|| periodChanged;
 		if (!changed) {
 			close();
 			return;
 		}
-		ShowDiscardStoryPrompt(promptParent, {
+		auto args = DiscardStoryArgs{
 			.draft = (setup.draftId != 0),
-			.allowDraft = !setup.editing,
+			.allowDraft = !setup.editing && !setup.preview,
 			.discard = [=] {
 				if (setup.draftId) {
 					Drafts(controller).remove(setup.draftId);
@@ -147,8 +148,10 @@ void SetupStoryEditorClose(
 				close();
 			},
 			.saveDraft = saveDraft,
-		});
-	}, raw->lifetime());
+		};
+		ShowDiscardStoryPrompt(promptParent, std::move(args));
+	};
+	raw->cancelRequests() | rpl::on_next(cancel, raw->lifetime());
 }
 
 [[nodiscard]] Editor::StoryOptions StoryEditorOptions(
@@ -159,6 +162,7 @@ void SetupStoryEditorClose(
 		.caption = setup.caption,
 		.period = setup.period ? setup.period : Api::kStoryDefaultPeriod,
 		.periodChoice = !setup.editing,
+		.showCaption = !setup.preview,
 		.sceneItems = setup.sceneItems,
 		.sceneFiles = setup.sceneFiles,
 		.storyAudio = setup.storyAudio,
@@ -170,6 +174,8 @@ void SetupStoryEditorClose(
 [[nodiscard]] QString StoryEditorConfirm(const StoryEditorSetup &setup) {
 	return setup.editing
 		? tr::lng_box_done(tr::now)
+		: setup.preview
+		? tr::lng_bot_media_previews_add(tr::now)
 		: tr::lng_intro_next(tr::now);
 }
 
@@ -902,11 +908,25 @@ void OpenStoryPhotoEditor(
 			collected.media,
 			close);
 	});
-	raw->doneRequests(
-	) | rpl::on_next([=](const Editor::PhotoModifications &mods) {
+	const auto submit = [=](const Editor::PhotoModifications &mods) {
 		auto result = ComposeStoryPhoto(image, background, mods);
 		if (result.isNull()) {
 			controller->showToast(tr::lng_bad_photo(tr::now));
+			return;
+		}
+		if (setup.preview) {
+			auto media = StoryPhotoMedia(
+				std::move(result),
+				image,
+				videoBased,
+				background,
+				mods,
+				original);
+			auto edited = StoryEditorResult{
+				.media = std::move(media),
+				.mediaChanged = raw->edited(),
+			};
+			done(std::move(edited), close);
 			return;
 		}
 		auto areas = CollectAreas(mods, result.size());
@@ -941,7 +961,8 @@ void OpenStoryPhotoEditor(
 					.fingerprint = fingerprint,
 				}),
 		}, close);
-	}, raw->lifetime());
+	};
+	raw->doneRequests() | rpl::on_next(submit, raw->lifetime());
 	raw->saveRequests(
 	) | rpl::on_next([=](const Editor::PhotoModifications &mods) {
 		SaveStoryToFile(
@@ -1075,20 +1096,6 @@ void WaitForStoryMedia(
 	}), waiting->lifetime);
 }
 
-void ShowLimitBox(
-		not_null<Window::SessionController*> controller,
-		rpl::producer<TextWithEntities> text) {
-	controller->show(Ui::MakeConfirmBox({
-		.text = std::move(text),
-		.confirmed = Fn<void(Fn<void()>)>([=](Fn<void()> close) {
-			close();
-			ShowPremiumPreviewBox(controller, PremiumFeature::Stories);
-		}),
-		.confirmText = tr::lng_premium_more_about(),
-		.title = tr::lng_story_limit_title(),
-	}));
-}
-
 constexpr auto kWebAppStoryShareMaxFileSize = int64(100 * 1024 * 1024);
 constexpr auto kWebAppStoryShareFileLife = 24 * 60 * 60;
 
@@ -1189,6 +1196,12 @@ void OpenWebAppStoryDownload(
 	loader->start();
 }
 
+[[nodiscard]] bool CanPostRepost(Main::Session &session) {
+	return CanPostStory(session.user())
+		&& (!session.appConfig().storiesPostingPremiumOnly()
+			|| session.premium());
+}
+
 } // namespace
 
 void ChooseStoryMedia(
@@ -1196,11 +1209,14 @@ void ChooseStoryMedia(
 		not_null<PeerData*> peer,
 		StoryEditorSetup setup,
 		StoryEditorDone done,
-		Fn<void()> selected) {
+		Fn<void()> selected,
+		Fn<bool()> valid) {
 	const auto parent = controller->widget();
 	const auto premium = controller->session().premium();
-	const auto callback = crl::guard(controller, [=](
-			FileDialog::OpenResult &&result) {
+	const auto callback = [=](FileDialog::OpenResult &&result) {
+		if (valid && !valid()) {
+			return;
+		}
 		const auto showError = [=](tr::phrase<> text) {
 			controller->showToast(text(tr::now));
 		};
@@ -1219,12 +1235,12 @@ void ChooseStoryMedia(
 			}
 			EditStoryFile(controller, std::move(*list), setup, done);
 		}
-	});
+	};
 	FileDialog::GetOpenPath(
 		parent.get(),
 		tr::lng_story_choose_media(tr::now),
 		FileDialog::PhotoVideoFilesFilter(),
-		callback);
+		crl::guard(controller, callback));
 }
 
 bool CanPostStory(not_null<PeerData*> peer) {
@@ -1236,12 +1252,11 @@ bool CanRepostStory(not_null<Data::Story*> story) {
 	return !story->mine()
 		&& story->canShare()
 		&& (story->photo() || story->document())
-		&& CanPostStory(story->session().user());
+		&& CanPostRepost(story->session());
 }
 
 bool CanRepostMessageToStory(not_null<HistoryItem*> item) {
-	const auto session = &item->history()->session();
-	if (!CanPostStory(session->user())) {
+	if (!CanPostRepost(item->history()->session())) {
 		return false;
 	} else if (item->isSponsored() || item->isService()) {
 		return false;
@@ -1666,15 +1681,43 @@ void EditStory(
 		return;
 	}
 	if (const auto photo = story->photo()) {
+		EditStoryMedia(
+			controller,
+			not_null(photo),
+			origin,
+			setup,
+			done);
+	} else if (const auto document = story->document()) {
+		EditStoryMedia(
+			controller,
+			not_null(document),
+			origin,
+			setup,
+			done);
+	}
+}
+
+void EditStoryMedia(
+		not_null<Window::SessionController*> controller,
+		CloudStoryMedia media,
+		Data::FileOrigin origin,
+		StoryEditorSetup setup,
+		StoryEditorDone done,
+		Fn<bool()> valid) {
+	const auto photo = [&](not_null<PhotoData*> photo) {
 		const auto media = photo->createMediaView();
 		media->wanted(Data::PhotoSize::Large, origin);
 		const auto ready = [=] {
 			return (media->image(Data::PhotoSize::Large) != nullptr);
 		};
 		const auto failed = [=] {
-			return photo->failed(Data::PhotoSize::Large);
+			return (valid && !valid())
+				|| photo->failed(Data::PhotoSize::Large);
 		};
-		WaitForStoryMedia(controller, ready, failed, [=] {
+		const auto open = [=] {
+			if (valid && !valid()) {
+				return;
+			}
 			OpenStoryPhotoEditor(
 				controller,
 				media->image(Data::PhotoSize::Large)->original(),
@@ -1684,17 +1727,23 @@ void EditStory(
 				{},
 				{},
 				done);
-		});
-	} else if (const auto document = story->document()) {
+		};
+		WaitForStoryMedia(controller, ready, failed, open);
+	};
+	const auto video = [&](not_null<DocumentData*> document) {
 		const auto media = document->createMediaView();
 		document->save(origin, QString());
 		const auto ready = [=] {
 			return media->loaded();
 		};
 		const auto failed = [=] {
-			return (document->status == FileDownloadFailed);
+			return (valid && !valid())
+				|| (document->status == FileDownloadFailed);
 		};
-		WaitForStoryMedia(controller, ready, failed, [=] {
+		const auto open = [=] {
+			if (valid && !valid()) {
+				return;
+			}
 			const auto path = document->filepath();
 			const auto content = path.isEmpty()
 				? media->bytes()
@@ -1721,8 +1770,10 @@ void EditStory(
 				{},
 				{},
 				done);
-		});
-	}
+		};
+		WaitForStoryMedia(controller, ready, failed, open);
+	};
+	v::match(media, photo, video);
 }
 
 void EditStoryPrivacy(
@@ -1841,9 +1892,6 @@ void ShowCanSendStoryError(
 		const Api::CanSendStory &result,
 		CanSendStoryErrorContext ctx) {
 	using Type = Api::CanSendStory::Type;
-	const auto session = &controller->session();
-	const auto premium = session->premium();
-	const auto limits = Data::PremiumLimits(session);
 	const auto stopLoading = [&] {
 		if (ctx.setLoading) {
 			ctx.setLoading(false);
@@ -1869,40 +1917,14 @@ void ShowCanSendStoryError(
 		}
 		return;
 	case Type::CountLimit:
-		stopLoading();
-		ShowLimitBox(controller, premium
-			? tr::lng_story_limit_count_premium(
-				lt_count,
-				rpl::single(float64(limits.storiesExpiringPremium())),
-				tr::rich)
-			: tr::lng_story_limit_count(
-				lt_count,
-				rpl::single(float64(limits.storiesExpiringDefault())),
-				tr::rich));
-		return;
 	case Type::WeeklyLimit:
-		stopLoading();
-		ShowLimitBox(controller, premium
-			? tr::lng_story_limit_weekly_premium(
-				lt_count,
-				rpl::single(float64(limits.storiesSentWeeklyPremium())),
-				tr::rich)
-			: tr::lng_story_limit_weekly(
-				lt_count,
-				rpl::single(float64(limits.storiesSentWeeklyDefault())),
-				tr::rich));
-		return;
 	case Type::MonthlyLimit:
 		stopLoading();
-		ShowLimitBox(controller, premium
-			? tr::lng_story_limit_monthly_premium(
-				lt_count,
-				rpl::single(float64(limits.storiesSentMonthlyPremium())),
-				tr::rich)
-			: tr::lng_story_limit_monthly(
-				lt_count,
-				rpl::single(float64(limits.storiesSentMonthlyDefault())),
-				tr::rich));
+		controller->show(
+			Box(
+				StoryPostingLimitBox,
+				controller,
+				result.type));
 		return;
 	case Type::LiveAlready:
 		stopLoading();

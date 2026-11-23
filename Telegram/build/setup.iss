@@ -78,6 +78,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "{#ReleasePath}\Telegram.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#ReleasePath}\{#ModulesFolder}\TelegramWidgetHelper.exe"; DestDir: "{app}\{#ModulesFolder}"; Flags: ignoreversion
 #if MyBuildTarget != "winarm"
 ; ANGLE compiles its shaders through this, Windows 7 has no system copy.
 Source: "{#ReleasePath}\{#ModulesFolder}\d3d\d3dcompiler_47.dll"; DestDir: "{app}\{#ModulesFolder}\d3d"; Flags: ignoreversion

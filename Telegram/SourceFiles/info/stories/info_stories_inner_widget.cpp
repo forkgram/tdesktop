@@ -322,9 +322,6 @@ void InnerWidget::createProfileTop() {
 	blocks.addSeparator();
 	// Layout insertion shows even wrappers whose initial toggle is off.
 	blocks.add(makeGiftsButton())->finishAnimating();
-	if (auto post = makePostButton()) {
-		blocks.add(std::move(post))->finishAnimating();
-	}
 	blocks.add(makeArchiveButton())->finishAnimating();
 	blocks.add(makeRecentButton())->finishAnimating();
 	Ui::AddSkip(_top, skip);
@@ -721,7 +718,7 @@ void InnerWidget::refreshEmpty() {
 		&& albumId
 		&& (albumId != Data::kStoriesAlbumIdArchive)
 		&& _peer->canEditStories();
-	_albumEmpty = albumCanAdd;
+	_albumEmpty = albumCanAdd || (albumId == Data::kStoriesAlbumIdSaved);
 	if (albumCanAdd) {
 		auto empty = object_ptr<Ui::VerticalLayout>(this);
 		empty->add(

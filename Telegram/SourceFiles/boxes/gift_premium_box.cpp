@@ -484,6 +484,8 @@ using SpinnerState = Data::GiftUpgradeSpinner::State;
 	return result;
 }
 
+} // namespace
+
 void AddUniqueGiftPropertyRows(
 		not_null<Ui::RpWidget*> container,
 		std::shared_ptr<ChatHelpers::Show> show,
@@ -611,6 +613,8 @@ void AddUniqueGiftPropertyRows(
 			SpinnerState::FinishedBackdrop),
 		margin);
 }
+
+namespace {
 
 [[nodiscard]] object_ptr<Ui::RpWidget> MakeStarGiftStarsValue(
 		not_null<Ui::TableLayout*> table,
@@ -1529,7 +1533,7 @@ void AddStarGiftTable(
 				show,
 				PeerId(entry.bareGiftResaleRecipientId)),
 			st::giveawayGiftCodePeerMargin);
-	} else if (unique && entry.bareGiftOwnerId) {
+	} else if (unique && !unique->fixedSale && entry.bareGiftOwnerId) {
 		const auto ownerId = PeerId(entry.bareGiftOwnerId);
 		const auto was = std::make_shared<std::optional<CollectibleId>>();
 		const auto handleChange = [=](
@@ -1560,7 +1564,7 @@ void AddStarGiftTable(
 			MakePeerWithStatusValue(table, show, ownerId, handleChange),
 			st::giveawayGiftCodePeerMargin);
 	} else if (unique) {
-		if (!unique->ownerName.isEmpty()) {
+		if (!unique->fixedSale && !unique->ownerName.isEmpty()) {
 			AddTableRow(
 				table,
 				tr::lng_gift_unique_owner(),

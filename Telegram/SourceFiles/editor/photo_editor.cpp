@@ -340,7 +340,7 @@ PhotoEditor::PhotoEditor(
 	data,
 	photo->size(),
 	Deserialize(Core::App().settings().photoEditorBrush()).fillShapes))
-, _captionBar(data.story
+, _captionBar((data.story && data.story->showCaption)
 	? base::make_unique_q<Ui::FadeWrap<CaptionBar>>(
 		this,
 		object_ptr<CaptionBar>(this, this, *data.story))
@@ -668,6 +668,7 @@ PhotoEditor::PhotoEditor(
 	_content->textEditStates(
 	) | rpl::on_next([=](bool editing) {
 		_textEditing = editing;
+		_controls->setTextEditing(editing);
 		if (_textEditing) {
 			_colorPicker->setToolSelectionVisible(false);
 		} else if (!_textItemSelected && !_shapeItemSelected) {

@@ -867,7 +867,8 @@ void List::paint(
 		}
 
 		if (const auto full = single.itemFull) {
-			if (full->element.hasVideoStream && expandRatio > 0.) {
+			if (full->element.hasVideoStream
+				&& expandRatio > 0.) {
 				p.setOpacity(expandRatio);
 				const auto skip = std::ceil(line + lineRead);
 				Ui::PaintLiveBadge(
@@ -879,10 +880,16 @@ void List::paint(
 			} else if (full->element.mine
 				&& !full->element.uploading
 				&& expandRatio > 0.) {
-				const auto fade = badgeFadeProgress(full->element.id, now);
+				const auto fade
+					= badgeFadeProgress(
+						full->element.id,
+						now);
 				if (fade > 0.) {
 					p.setOpacity(expandRatio * fade);
-					paintAddBadge(p, full->element.id, userpic);
+					paintAddBadge(
+						p,
+						full->element.id,
+						userpic);
 				}
 			}
 		}
@@ -1279,6 +1286,9 @@ void List::checkLoadMore() {
 }
 
 void List::mouseReleaseEvent(QMouseEvent *e) {
+	if (e->button() != Qt::LeftButton) {
+		return;
+	}
 	_lastMousePosition = e->globalPos();
 	const auto guard = gsl::finally([&] {
 		_mouseDownPosition = std::nullopt;
@@ -1292,15 +1302,17 @@ void List::mouseReleaseEvent(QMouseEvent *e) {
 	if (_selected == pressed) {
 		if (!_expanded) {
 			requestExpanded(true);
-		} else if (_selected < _data.items.size()) {
-			const auto id = _data.items[_selected].element.id;
+		} else if (_selected >= 0 && _selected < _data.items.size()) {
+			const auto &element = _data.items[_selected].element;
 			const auto point = QPointF(mapFromGlobal(e->globalPos()));
-			if (_addBadge
-				&& (_addBadge->first == id)
-				&& _addBadge->second.contains(point)) {
-				_addStoryClicks.fire_copy(id);
+			if (element.canAddFirstStory()
+				|| (_addBadge
+					&& (_addBadge->first == element.id)
+					&& _addBadge->second
+						.contains(point))) {
+				_addStoryClicks.fire_copy(element.id);
 			} else {
-				_clicks.fire_copy(id);
+				_clicks.fire_copy(element.id);
 			}
 		}
 	}

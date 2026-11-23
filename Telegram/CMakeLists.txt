@@ -25,14 +25,17 @@ get_filename_component(src_loc SourceFiles REALPATH)
 get_filename_component(res_loc Resources REALPATH)
 
 include(cmake/telegram_options.cmake)
+if (APPLE
+    OR WIN32
+    OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    include(cmake/init_standalone_target.cmake)
+endif()
 include(cmake/lib_ffmpeg.cmake)
 include(cmake/lib_stripe.cmake)
 include(cmake/lib_tgcalls.cmake)
 include(cmake/lib_prisma.cmake)
 include(cmake/lib_fido2.cmake)
 include(cmake/lib_zxcvbn.cmake)
-include(cmake/lib_litehtml.cmake)
-include(cmake/lib_quickjs.cmake)
 include(cmake/lib_widget_renderer.cmake)
 include(cmake/lib_widget_sandbox.cmake)
 include(cmake/td_export.cmake)
@@ -82,10 +85,8 @@ set_target_properties(Telegram PROPERTIES AUTOMOC ON)
 target_link_libraries(Telegram
 PRIVATE
     tdesktop::lib_fido2
-    tdesktop::lib_litehtml
-    tdesktop::lib_quickjs
-    tdesktop::lib_widget_renderer
-    tdesktop::lib_widget_sandbox
+    tdesktop::lib_widget_renderer_platform
+    tdesktop::lib_widget_sandbox_host
     tdesktop::lib_tgcalls
     tdesktop::td_export
     tdesktop::td_gram
@@ -146,6 +147,10 @@ PRIVATE
     api/api_bot.h
     api/api_bot_info.cpp
     api/api_bot_info.h
+    api/api_bot_media_preview_upload.cpp
+    api/api_bot_media_preview_upload.h
+    api/api_bot_media_previews.cpp
+    api/api_bot_media_previews.h
     api/api_chat_filters.cpp
     api/api_chat_filters.h
     api/api_chat_filters_remove_manager.cpp
@@ -324,6 +329,8 @@ PRIVATE
     boxes/peers/edit_peer_type_box.h
     boxes/peers/edit_peer_usernames_list.cpp
     boxes/peers/edit_peer_usernames_list.h
+    boxes/peers/invite_to_bot_box.cpp
+    boxes/peers/invite_to_bot_box.h
     boxes/peers/peer_short_info_box.cpp
     boxes/peers/peer_short_info_box.h
     boxes/peers/prepare_short_info_box.cpp
@@ -372,6 +379,8 @@ PRIVATE
     boxes/edit_todo_list_box.h
     boxes/gift_credits_box.cpp
     boxes/gift_credits_box.h
+    boxes/gift_onchain_offer_box.cpp
+    boxes/gift_onchain_offer_box.h
     boxes/gift_premium_box.cpp
     boxes/gift_premium_box.h
     boxes/keys_legend.cpp
@@ -380,6 +389,8 @@ PRIVATE
     boxes/language_box.h
     boxes/max_invite_box.cpp
     boxes/max_invite_box.h
+    boxes/message_video_edit.cpp
+    boxes/message_video_edit.h
     boxes/moderate_messages_box.cpp
     boxes/moderate_messages_box.h
     boxes/music_attach_box.cpp
@@ -404,6 +415,8 @@ PRIVATE
     boxes/pin_messages_box.h
     boxes/premium_limits_box.cpp
     boxes/premium_limits_box.h
+    boxes/premium_story_limits_box.cpp
+    boxes/premium_story_limits_box.h
     boxes/premium_preview_box.cpp
     boxes/premium_preview_box.h
     boxes/reactions_settings_box.cpp
@@ -444,6 +457,18 @@ PRIVATE
     boxes/star_gift_craft_animation.h
     boxes/star_gift_craft_box.cpp
     boxes/star_gift_craft_box.h
+    boxes/star_gift_onchain_buy_box.cpp
+    boxes/star_gift_onchain_buy_box.h
+    boxes/star_gift_onchain_offer_buy_box.cpp
+    boxes/star_gift_onchain_offer_buy_box.h
+    boxes/star_gift_onchain_offer_confirm_box.cpp
+    boxes/star_gift_onchain_offer_confirm_box.h
+    boxes/star_gift_onchain_sale_box.cpp
+    boxes/star_gift_onchain_sale_box.h
+    boxes/star_gift_onchain_signing.cpp
+    boxes/star_gift_onchain_signing.h
+    boxes/star_gift_onchain_withdraw_box.cpp
+    boxes/star_gift_onchain_withdraw_box.h
     boxes/star_gift_preview_box.cpp
     boxes/star_gift_preview_box.h
     boxes/star_gift_resale_box.cpp
@@ -958,6 +983,8 @@ PRIVATE
     editor/editor_audio_timeline.h
     editor/editor_caption_bar.cpp
     editor/editor_caption_bar.h
+    editor/editor_gif.cpp
+    editor/editor_gif.h
     editor/editor_link_box.cpp
     editor/editor_link_box.h
     editor/editor_message_render.cpp
@@ -1290,8 +1317,12 @@ PRIVATE
     history/history.h
     history/history_drag_area.cpp
     history/history_drag_area.h
+    history/history_gift_onchain_offer.cpp
+    history/history_gift_onchain_offer.h
     history/history_item.cpp
     history/history_item.h
+    history/history_item_bot_invite.cpp
+    history/history_item_bot_invite.h
     history/history_item_components.cpp
     history/history_item_components.h
     history/history_item_edition.cpp
@@ -1310,6 +1341,8 @@ PRIVATE
     history/history_location_manager.h
     history/history_streamed_drafts.cpp
     history/history_streamed_drafts.h
+    history/history_top_message_hint.cpp
+    history/history_top_message_hint.h
     history/history_translation.cpp
     history/history_translation.h
     history/history_unread_things.cpp
@@ -1404,6 +1437,10 @@ PRIVATE
     info/profile/info_profile_actions.h
     info/profile/info_profile_badge.cpp
     info/profile/info_profile_badge.h
+    info/profile/info_profile_bot_media_previews.cpp
+    info/profile/info_profile_bot_media_previews.h
+    info/profile/info_profile_bot_preview_provider.cpp
+    info/profile/info_profile_bot_preview_provider.h
     info/profile/info_profile_balance_pill.cpp
     info/profile/info_profile_balance_pill.h
     info/profile/info_profile_birthday_effect.cpp
@@ -1438,6 +1475,7 @@ PRIVATE
     info/profile/info_profile_status_label.h
     info/profile/info_profile_top_bar.cpp
     info/profile/info_profile_top_bar.h
+    info/profile/info_profile_top_bar_my_profile.cpp
     info/profile/info_profile_values.cpp
     info/profile/info_profile_values.h
     info/profile/info_profile_widget.cpp
@@ -1807,6 +1845,7 @@ PRIVATE
     overview/overview_layout.cpp
     overview/overview_layout.h
     overview/overview_layout_delegate.h
+    overview/overview_voice_search.cpp
     poll/poll_link_box.cpp
     poll/poll_link_box.h
     poll/poll_link_thumbnail.cpp
@@ -1861,6 +1900,11 @@ PRIVATE
     platform/linux/update_install_linux.cpp
     platform/linux/update_install_linux.h
     platform/linux/webauthn_linux.cpp
+    platform/linux/widget_descriptors_linux.cpp
+    platform/linux/widget_descriptors_linux.h
+    platform/linux/widget_helper_linux.cpp
+    platform/linux/widget_helper_linux.h
+    platform/linux/widget_lockdown_linux.h
     platform/mac/file_utilities_mac.mm
     platform/mac/file_utilities_mac.h
     platform/mac/global_menu_mac.h
@@ -1897,6 +1941,9 @@ PRIVATE
     platform/mac/wallet_protection_mac.h
     platform/mac/wallet_protection_mac.mm
     platform/mac/webauthn_mac.mm
+    platform/mac/widget_helper_mac.h
+    platform/mac/widget_helper_mac.mm
+    platform/mac/widget_helper_store_mac.mm
     platform/mac/window_title_mac.mm
     platform/mac/touchbar/items/mac_formatter_item.h
     platform/mac/touchbar/items/mac_formatter_item.mm
@@ -1916,6 +1963,12 @@ PRIVATE
     platform/mac/touchbar/mac_touchbar_manager.mm
     platform/mac/touchbar/mac_touchbar_media_view.h
     platform/mac/touchbar/mac_touchbar_media_view.mm
+    platform/posix/widget_channel_posix.cpp
+    platform/posix/widget_channel_posix.h
+    platform/posix/widget_reaping_posix.cpp
+    platform/posix/widget_reaping_posix.h
+    platform/posix/widget_stderr_posix.cpp
+    platform/posix/widget_stderr_posix.h
     platform/win/file_utilities_win.cpp
     platform/win/file_utilities_win.h
     platform/win/launcher_win.cpp
@@ -1938,6 +1991,13 @@ PRIVATE
     platform/win/wallet_protection_win.cpp
     platform/win/wallet_protection_win.h
     platform/win/webauthn_win.cpp
+    platform/win/widget_channel_win.cpp
+    platform/win/widget_channel_win.h
+    platform/win/widget_helper_image_win.cpp
+    platform/win/widget_helper_image_win.h
+    platform/win/widget_helper_win.cpp
+    platform/win/widget_sandbox_win.cpp
+    platform/win/widget_sandbox_win.h
     platform/win/windows_app_user_model_id.cpp
     platform/win/windows_app_user_model_id.h
     platform/win/windows_dlls.cpp
@@ -1964,6 +2024,7 @@ PRIVATE
     platform/platform_translate_provider.h
     platform/platform_tray.h
     platform/platform_webauthn.h
+    platform/platform_widget_helper.h
     platform/platform_window_title.h
     profile/profile_block_widget.cpp
     profile/profile_block_widget.h
@@ -2283,12 +2344,12 @@ PRIVATE
     test/test_widget_conformance_bridge.h
     test/test_widget_conformance_context.cpp
     test/test_widget_conformance_context.h
+    test/test_widget_conformance_death.cpp
+    test/test_widget_conformance_death.h
     test/test_widget_conformance_hosts.cpp
     test/test_widget_conformance_hosts.h
     test/test_widget_conformance_input.cpp
     test/test_widget_conformance_input.h
-    test/test_widget_conformance_paint_policy.cpp
-    test/test_widget_conformance_paint_policy.h
     test/test_widget_conformance_pictures.cpp
     test/test_widget_conformance_pictures.h
     test/test_widget_conformance_state.h
@@ -2296,12 +2357,19 @@ PRIVATE
     test/test_widget_conformance_stop.h
     test/test_widget_fixture.cpp
     test/test_widget_fixture.h
+    test/test_widget_helper_probe.cpp
+    test/test_widget_helper_probe.h
+    test/test_widget_helper_probe_lockdown.h
     test/test_widget_host.cpp
     test/test_widget_host.h
     test/test_widget_ops.cpp
     test/test_widget_ops.h
-    test/test_widget_paint_policy.cpp
-    test/test_widget_paint_policy.h
+    test/test_widget_ops_check.cpp
+    test/test_widget_ops_deaths.cpp
+    test/test_widget_ops_exchanges.cpp
+    test/test_widget_ops_hosted.cpp
+    test/test_widget_ops_internal.h
+    test/test_widget_renderer_forward.h
     test/test_widget_stress.cpp
     test/test_widget_stress.h
     test/test_widget_stress_internal.h
@@ -2316,24 +2384,38 @@ PRIVATE
     tgw/tgw_bridge.h
     tgw/tgw_canvas.cpp
     tgw/tgw_canvas.h
-    tgw/tgw_cursor.cpp
-    tgw/tgw_cursor.h
     tgw/tgw_emoji.cpp
     tgw/tgw_emoji.h
     tgw/tgw_emoji_images.cpp
     tgw/tgw_emoji_images.h
+    tgw/tgw_hosted_wire.h
     tgw/tgw_intl.cpp
     tgw/tgw_intl.h
+    tgw/tgw_kept_budget.cpp
+    tgw/tgw_kept_budget.h
     tgw/tgw_log_box.cpp
     tgw/tgw_log_box.h
     tgw/tgw_media.cpp
     tgw/tgw_media.h
     tgw/tgw_painter.cpp
     tgw/tgw_painter.h
+    tgw/tgw_painter_clips.cpp
+    tgw/tgw_painter_clips.h
     tgw/tgw_painter_filters.cpp
     tgw/tgw_painter_filters.h
+    tgw/tgw_remote.cpp
+    tgw/tgw_remote.h
+    tgw/tgw_render_thread.cpp
+    tgw/tgw_render_thread.h
     tgw/tgw_renderer.cpp
     tgw/tgw_renderer.h
+    tgw/tgw_renderer_input.cpp
+    tgw/tgw_renderer_input.h
+    tgw/tgw_renderer_platform.cpp
+    tgw/tgw_renderer_platform.h
+    tgw/tgw_renderer_rules.h
+    tgw/tgw_renderer_work.cpp
+    tgw/tgw_renderer_work.h
     tgw/tgw_resources.cpp
     tgw/tgw_resources.h
     tgw/tgw_runtime.cpp
@@ -2357,6 +2439,8 @@ PRIVATE
     tgw/tgw_touch_lists.cpp
     tgw/tgw_wallet.cpp
     tgw/tgw_wallet.h
+    tgw/tgw_widget_meter.cpp
+    tgw/tgw_widget_meter.h
     ui/boxes/edit_invite_link_session.cpp
     ui/boxes/edit_invite_link_session.h
     ui/boxes/emoji_stake_box.cpp
@@ -2458,6 +2542,8 @@ PRIVATE
     ui/filter_icons.h
     ui/filter_icon_panel.cpp
     ui/filter_icon_panel.h
+    ui/filter_title_icon.cpp
+    ui/filter_title_icon.h
     ui/item_text_options.cpp
     ui/item_text_options.h
     ui/resize_area.h
@@ -2533,6 +2619,8 @@ PRIVATE
     wallet/wallet_key_protection.h
     wallet/wallet_move_to_gifts.cpp
     wallet/wallet_move_to_gifts.h
+    wallet/wallet_onchain_gift_presentation.cpp
+    wallet/wallet_onchain_gift_presentation.h
     wallet/wallet_onramp.cpp
     wallet/wallet_onramp.h
     wallet/wallet_own_card.cpp
@@ -2555,6 +2643,10 @@ PRIVATE
     wallet/wallet_session_deposit.h
     wallet/wallet_session_gift_moves.cpp
     wallet/wallet_session_gift_moves.h
+    wallet/wallet_session_onchain_gifts.cpp
+    wallet/wallet_session_onchain_gifts.h
+    wallet/wallet_session_served.cpp
+    wallet/wallet_session_served.h
     wallet/wallet_session_waits.cpp
     wallet/wallet_session_waits.h
     wallet/wallet_stream.cpp
@@ -2718,6 +2810,12 @@ if (NOT build_winstore)
     remove_target_sources(Telegram ${src_loc}
         platform/win/windows_start_task.cpp
         platform/win/windows_start_task.h
+    )
+endif()
+
+if (NOT build_macstore)
+    remove_target_sources(Telegram ${src_loc}
+        platform/mac/widget_helper_store_mac.mm
     )
 endif()
 
@@ -2971,9 +3069,20 @@ set_target_properties(Telegram PROPERTIES
     XCODE_ATTRIBUTE_COPY_PHASE_STRIP NO
     XCODE_ATTRIBUTE_ALWAYS_SEARCH_USER_PATHS NO
     XCODE_ATTRIBUTE_CLANG_CXX_LIBRARY libc++
-    XCODE_ATTRIBUTE_OTHER_CODE_SIGN_FLAGS --deep
     XCODE_ATTRIBUTE_CLANG_DEBUG_INFORMATION_LEVEL $<IF:$<CONFIG:Debug>,default,line-tables-only>
 )
+if (APPLE AND CMAKE_GENERATOR STREQUAL Xcode)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_custom_command(TARGET Telegram POST_BUILD
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/build/sign_mac.py
+            --xcode
+            --runtime
+            --entitlements ${CMAKE_CURRENT_SOURCE_DIR}/Telegram/${bundle_entitlements}
+            $<TARGET_BUNDLE_DIR:Telegram>
+        VERBATIM
+    )
+endif()
+
 set(entitlement_sources
     "${CMAKE_CURRENT_SOURCE_DIR}/Telegram/Telegram.entitlements"
     "${CMAKE_CURRENT_SOURCE_DIR}/Telegram/Telegram Lite.entitlements"
@@ -3121,6 +3230,12 @@ if (WIN32 AND DESKTOP_APP_WIN7_PROBE)
 endif()
 
 target_prepare_qrc(Telegram)
+
+if (APPLE
+    OR WIN32
+    OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    include(cmake/telegram_widget_helper.cmake)
+endif()
 
 if (NOT DESKTOP_APP_DISABLE_AUTOUPDATE AND NOT build_macstore AND NOT build_winstore)
     add_executable(Updater WIN32)

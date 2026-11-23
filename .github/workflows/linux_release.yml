@@ -185,7 +185,7 @@ jobs:
         run: |
           set -e
           release="out/$BUILD_CONFIG"
-          for f in Forkgram Updater Packer; do
+          for f in Forkgram Updater Packer TelegramHelpers/TelegramWidgetHelper; do
             if [ ! -f "$release/$f" ]; then
               echo "Build error: $release/$f does not exist."
               exit 1
@@ -207,7 +207,7 @@ jobs:
         run: |
           set -e
           cd out/$BUILD_CONFIG
-          ./Packer -path Forkgram -path Updater -version "$AppVersion" \
+          ./Packer -path Forkgram -path Updater -path TelegramHelpers/TelegramWidgetHelper -version "$AppVersion" \
             -channel "$UPD_CHANNEL" \
             -keys-loc "$GITHUB_WORKSPACE/Telegram/Resources/update" \
             -emit-signing-input update-signing-input.bin
@@ -226,7 +226,7 @@ jobs:
           release="out/$BUILD_CONFIG"
           mkdir -p deploy
 
-          tar -cJf "deploy/$ASSET_PORTABLE" -C "$release" Forkgram Updater
+          tar -cJf "deploy/$ASSET_PORTABLE" -C "$release" Forkgram Updater TelegramHelpers/TelegramWidgetHelper
 
           # The update file keeps its raw name: the Telegram job derives the platform from it.
           cp "$release/${UPD_PREFIX}${AppVersion}${UPD_SUFFIX}.unsigned" deploy/

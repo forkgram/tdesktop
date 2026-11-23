@@ -530,7 +530,7 @@ if customRunCommand:
 stage('patches', """
     git clone https://github.com/desktop-app/patches.git
     cd patches
-    git checkout 69f23a834024d6064da209076151393582b3c966
+    git checkout 8a28b8433af70771c3d101c776ad837a94bd47ec
 mac:
     sed -i '' "s/10.13/$MACOSX_DEPLOYMENT_TARGET/g" macos_meson_*.txt
     git clone https://github.com/desktop-app/qt6_highsierra_patches.git qt6_highsierra
@@ -863,8 +863,10 @@ win:
 
 # Somehow in x86 Debug build dav1d crashes on AV1 10bpc videos.
 stage('dav1d', """
+depends:patches/dav1d.patch
     git clone -b 1.5.4 https://code.videolan.org/videolan/dav1d.git
     cd dav1d
+    git apply ../patches/dav1d.patch
 win32:
     SET "TARGET=x86"
     SET "DAV1D_ASM_DISABLE=-Denable_asm=false"
@@ -1242,31 +1244,32 @@ mac:
         --enable-cross-compile \
         --target-os=darwin \
         --arch="$arch" \
-        --extra-cflags="$MIN_VER -arch $arch $UNGUARDED -DCONFIG_SAFE_BITSTREAM_READER=1 -I$USED_PREFIX/include" \
-        --extra-cxxflags="$MIN_VER -arch $arch $UNGUARDED -DCONFIG_SAFE_BITSTREAM_READER=1 -I$USED_PREFIX/include" \
+        --extra-cflags="$MIN_VER -arch $arch $UNGUARDED -I$USED_PREFIX/include" \
+        --extra-cxxflags="$MIN_VER -arch $arch $UNGUARDED -I$USED_PREFIX/include" \
         --extra-ldflags="$MIN_VER -arch $arch $USED_PREFIX/lib/libopus.a -lc++" \
         --disable-programs \
         --disable-doc \
         --disable-network \
+        --disable-autodetect \
         --disable-everything \
         --enable-protocol=file \
         --enable-libdav1d \
         --enable-libopenh264 \
         --enable-libopus \
         --enable-libvpx \
+        --enable-videotoolbox \
+        --enable-hwaccel=av1_videotoolbox \
         --enable-hwaccel=h264_videotoolbox \
         --enable-hwaccel=hevc_videotoolbox \
         --enable-hwaccel=mpeg1_videotoolbox \
         --enable-hwaccel=mpeg2_videotoolbox \
         --enable-hwaccel=mpeg4_videotoolbox \
         --enable-decoder=aac \
-        --enable-decoder=aac_at \
         --enable-decoder=aac_fixed \
         --enable-decoder=aac_latm \
         --enable-decoder=aasc \
         --enable-decoder=ac3 \
         --enable-decoder=alac \
-        --enable-decoder=alac_at \
         --enable-decoder=av1 \
         --enable-decoder=eac3 \
         --enable-decoder=flac \
@@ -1281,39 +1284,30 @@ mac:
         --enable-decoder=mp2 \
         --enable-decoder=mp2float \
         --enable-decoder=mp3 \
-        --enable-decoder=mp3adu \
-        --enable-decoder=mp3adufloat \
         --enable-decoder=mp3float \
         --enable-decoder=mp3on4 \
         --enable-decoder=mp3on4float \
+        --enable-decoder=mpeg1video \
+        --enable-decoder=mpeg2video \
         --enable-decoder=mpeg4 \
         --enable-decoder=msmpeg4v2 \
         --enable-decoder=msmpeg4v3 \
         --enable-decoder=opus \
         --enable-decoder=pcm_alaw \
-        --enable-decoder=pcm_alaw_at \
         --enable-decoder=pcm_f32be \
         --enable-decoder=pcm_f32le \
         --enable-decoder=pcm_f64be \
         --enable-decoder=pcm_f64le \
-        --enable-decoder=pcm_lxf \
         --enable-decoder=pcm_mulaw \
-        --enable-decoder=pcm_mulaw_at \
         --enable-decoder=pcm_s16be \
-        --enable-decoder=pcm_s16be_planar \
         --enable-decoder=pcm_s16le \
-        --enable-decoder=pcm_s16le_planar \
         --enable-decoder=pcm_s24be \
-        --enable-decoder=pcm_s24daud \
         --enable-decoder=pcm_s24le \
-        --enable-decoder=pcm_s24le_planar \
         --enable-decoder=pcm_s32be \
         --enable-decoder=pcm_s32le \
-        --enable-decoder=pcm_s32le_planar \
         --enable-decoder=pcm_s64be \
         --enable-decoder=pcm_s64le \
         --enable-decoder=pcm_s8 \
-        --enable-decoder=pcm_s8_planar \
         --enable-decoder=pcm_u16be \
         --enable-decoder=pcm_u16le \
         --enable-decoder=pcm_u24be \
@@ -1337,27 +1331,25 @@ mac:
         --enable-filter=atempo \
         --enable-parser=aac \
         --enable-parser=aac_latm \
+        --enable-parser=ac3 \
         --enable-parser=flac \
         --enable-parser=gif \
         --enable-parser=h264 \
         --enable-parser=hevc \
         --enable-parser=mpeg4video \
         --enable-parser=mpegaudio \
+        --enable-parser=mpegvideo \
         --enable-parser=opus \
         --enable-parser=vorbis \
         --enable-demuxer=aac \
         --enable-demuxer=flac \
         --enable-demuxer=gif \
-        --enable-demuxer=h264 \
-        --enable-demuxer=hevc \
         --enable-demuxer=matroska \
-        --enable-demuxer=m4v \
         --enable-demuxer=mov \
         --enable-demuxer=mp3 \
         --enable-demuxer=ogg \
         --enable-demuxer=wav \
         --enable-muxer=mp4 \
-        --enable-muxer=ogg \
         --enable-muxer=opus \
         --enable-muxer=wav \
         --enable-muxer=webm
@@ -1805,7 +1797,7 @@ win:
 stage('tg_owt', """
     git clone https://github.com/desktop-app/tg_owt.git
     cd tg_owt
-    git checkout 642ddb107b42da7c8d152401b71cd429475e5266
+    git checkout a9d098a8f126dff818889d56f4241d7d2aaac9c1
     git submodule update --init --recursive
 win:
     SET MOZJPEG_PATH=$LIBS_DIR/mozjpeg
