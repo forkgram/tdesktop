@@ -376,6 +376,7 @@ QSize Gif::countThumbSize(int &inOutWidthMax) const {
 }
 
 QSize Gif::countOptimalSize() {
+	ensureTranscribeButton();
 	if (_data->isVideoMessage() && _transcribe) {
 		const auto &entry = _data->session().api().transcribes().entry(
 			_realParent);
@@ -2728,6 +2729,7 @@ void Gif::ensureTranscribeButton() const {
 		&& !_parent->data()->isAdminLogEntry()
 		&& (_parent->context() != Context::MediaEditor)
 		&& (_data->session().premium()
+			|| _data->session().api().transcribes().cloudflareFor(_realParent)
 			|| _data->session().api().transcribes().trialsSupport())) {
 		if (!_transcribe) {
 			_transcribe = std::make_unique<TranscribeButton>(

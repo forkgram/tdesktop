@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "settings/sections/settings_fork.h"
 
 #include "api/api_authorizations.h"
+#include "api/api_transcribes.h"
 #include "apiwrap.h"
 #include "base/timer.h"
 #include "calls/calls_call.h"
@@ -49,14 +50,24 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/application.h"
 #include "core/core_settings.h"
 #include "core/file_utilities.h"
+#include "data/data_channel.h"
+#include "data/data_document.h"
+#include "data/data_media_types.h"
+#include "data/data_peer.h"
+#include "data/data_session.h"
+#include "data/data_user.h"
 #include "forkgram/link_replacements.h"
 #include "forkgram/link_replacements_box.h"
+#include "history/history.h"
+#include "history/history_item.h"
+#include "history/view/history_view_element.h"
 #include "lang/lang_keys.h"
 #include "main/main_domain.h"
 #include "main/main_session.h"
 #include "menu/menu_item_save_to_markdown.h"
 #include "settings/settings_common.h"
 #include "storage/localstorage.h"
+#include "storage/storage_account.h"
 #include "styles/style_boxes.h"
 #include "styles/style_layers.h"
 #include "styles/style_settings.h"
@@ -66,16 +77,192 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/vertical_list.h"
 #include "ui/widgets/checkbox.h"
 #include "ui/widgets/fields/input_field.h"
+#include "ui/widgets/fields/password_input.h"
 #include "ui/wrap/slide_wrap.h"
 #include "ui/wrap/vertical_layout.h"
 #include "window/window_session_controller.h"
 #include "styles/style_menu_icons.h"
+
+#include <QtCore/QRegularExpression>
 
 namespace Settings {
 
 namespace {
 using langString = tr::phrase<>;
 using SessionController = not_null<Window::SessionController*>;
+
+constexpr auto kCloudflareSttEnabled = "fork_cf_stt_enabled";
+constexpr auto kCloudflareSttAccount = "fork_cf_stt_account";
+constexpr auto kCloudflareSttToken = "fork_cf_stt_token";
+
+rpl::event_stream<Main::Session*> &CloudflareSttChanges() {
+	static auto changes = rpl::event_stream<Main::Session*>();
+	return changes;
+}
+
+void RefreshCloudflareTranscriptionMessages(not_null<Main::Session*> session) {
+	auto &data = session->data();
+	auto views = std::vector<base::weak_ptr<HistoryView::Element>>();
+	const auto collect = [&](not_null<PeerData*> peer) {
+		if (const auto history = data.historyLoaded(peer->id)) {
+			for (const auto &block : history->blocks) {
+				for (const auto &view : block->messages) {
+					const auto item = view->data();
+					const auto media = item->media();
+					const auto document = media ? media->document() : nullptr;
+					if (document
+						&& (document->isVoiceMessage()
+							|| document->isVideoMessage())) {
+						views.push_back(base::make_weak(view.get()));
+					}
+				}
+			}
+		}
+	};
+	data.enumerateUsers(collect);
+	data.enumerateGroups(collect);
+	data.enumerateBroadcasts(collect);
+	for (const auto &weak : views) {
+		if (const auto view = weak.get()) {
+			data.requestItemResize(view->data());
+		}
+	}
+}
+
+void SetupCloudflareStt(
+		not_null<Ui::VerticalLayout*> content,
+		not_null<Window::SessionController*> controller) {
+	const auto session = &controller->session();
+	auto &local = session->local();
+	const auto enabledState = std::make_shared<rpl::variable<bool>>(
+		local.readPref<bool>(kCloudflareSttEnabled, false));
+	const auto enabled = content->add(object_ptr<Ui::SettingsButton>(
+		content,
+		tr::lng_fork_cf_stt_enabled(),
+		st::settingsButtonNoIcon));
+	enabled->toggleOn(enabledState->value());
+	const auto account = content->add(
+		object_ptr<Ui::InputField>(
+			content,
+			st::defaultInputField,
+			tr::lng_fork_cf_stt_account(),
+			local.readPref<QString>(kCloudflareSttAccount)),
+		st::markdownLinkFieldPadding);
+	account->setInputMethodHints(Qt::ImhLatinOnly
+		| Qt::ImhNoAutoUppercase
+		| Qt::ImhNoPredictiveText);
+	const auto tokenWrap = content->add(
+		object_ptr<Ui::RpWidget>(content),
+		st::markdownLinkFieldPadding);
+	const auto token = Ui::CreateChild<Ui::PasswordInput>(
+		tokenWrap,
+		st::defaultInputField,
+		tr::lng_fork_cf_stt_token(),
+		local.readPref<QString>(kCloudflareSttToken));
+	token->heightValue() | rpl::on_next([=](int height) {
+		tokenWrap->resize(tokenWrap->width(), height);
+	}, token->lifetime());
+	tokenWrap->widthValue() | rpl::on_next([=](int width) {
+		token->resize(width, token->height());
+	}, tokenWrap->lifetime());
+	const auto validAccount = [](const QString &value) {
+		static const auto kPattern = QRegularExpression(u"\\A[a-zA-Z0-9]+\\z"_q);
+		return kPattern.match(value).hasMatch();
+	};
+	const auto validToken = [](const QString &value) {
+		static const auto kPattern = QRegularExpression(
+			u"\\A[a-zA-Z0-9_-]{40,}\\z"_q);
+		return kPattern.match(value).hasMatch();
+	};
+	const auto syncing = content->lifetime().make_state<bool>(false);
+	const auto notifyChanged = [=](bool enabledBefore, bool enabledAfter) {
+		if (enabledBefore) {
+			session->api().transcribes().settingsChanged();
+		}
+		if (enabledBefore != enabledAfter) {
+			RefreshCloudflareTranscriptionMessages(session);
+		}
+		CloudflareSttChanges().fire_copy(session);
+	};
+	const auto updateField = [=](const char *key, const QString &text) {
+		if (*syncing) {
+			return;
+		}
+		auto &local = session->local();
+		const auto value = text.trimmed();
+		if (local.readPref<QString>(key) == value) {
+			return;
+		}
+		const auto wasEnabled = local.readPref<bool>(kCloudflareSttEnabled, false);
+		local.writePref<QString>(key, value);
+		const auto accountValue = local.readPref<QString>(
+			kCloudflareSttAccount).trimmed();
+		const auto tokenValue = local.readPref<QString>(
+			kCloudflareSttToken).trimmed();
+		const auto isEnabled = wasEnabled
+			&& validAccount(accountValue)
+			&& validToken(tokenValue);
+		if (wasEnabled != isEnabled) {
+			local.writePref<bool>(kCloudflareSttEnabled, false);
+		}
+		notifyChanged(wasEnabled, isEnabled);
+	};
+	account->changes() | rpl::on_next([=] {
+		updateField(kCloudflareSttAccount, account->getLastText());
+	}, account->lifetime());
+	QObject::connect(token, &Ui::MaskedInputField::changed, [=] {
+		updateField(kCloudflareSttToken, token->getLastText());
+	});
+	enabled->toggledChanges() | rpl::on_next([=](bool checked) {
+		auto &local = session->local();
+		if (*syncing) {
+			return;
+		}
+		const auto wasEnabled = local.readPref<bool>(kCloudflareSttEnabled, false);
+		if (checked == wasEnabled) {
+			return;
+		}
+		if (checked) {
+			const auto accountValue = local.readPref<QString>(
+				kCloudflareSttAccount).trimmed();
+			const auto tokenValue = local.readPref<QString>(
+				kCloudflareSttToken).trimmed();
+			if (!validAccount(accountValue)) {
+				enabledState->force_assign(false);
+				account->setFocusFast();
+				account->showError();
+				return;
+			} else if (!validToken(tokenValue)) {
+				enabledState->force_assign(false);
+				token->setFocusFast();
+				token->showError();
+				return;
+			}
+		}
+		local.writePref<bool>(kCloudflareSttEnabled, checked);
+		notifyChanged(wasEnabled, checked);
+	}, enabled->lifetime());
+	CloudflareSttChanges().events() | rpl::filter([=](Main::Session *changed) {
+		return changed == session;
+	}) | rpl::on_next([=](Main::Session *) {
+		auto &local = session->local();
+		const auto accountValue = local.readPref<QString>(kCloudflareSttAccount);
+		const auto tokenValue = local.readPref<QString>(kCloudflareSttToken);
+		*syncing = true;
+		if (account->getLastText().trimmed() != accountValue.trimmed()) {
+			account->setText(accountValue);
+		}
+		if (token->getLastText().trimmed() != tokenValue.trimmed()) {
+			token->setText(tokenValue);
+		}
+		enabledState->force_assign(
+			local.readPref<bool>(kCloudflareSttEnabled, false));
+		*syncing = false;
+	}, content->lifetime());
+	account->submits() | rpl::on_next([=] {
+		token->setFocusFast();
+	}, account->lifetime());
+}
 
 class SettingBox : public Ui::BoxContent, public base::has_weak_ptr  {
 public:
@@ -703,6 +890,29 @@ void BuildForkSectionContent(SectionBuilder &builder) {
 		[](bool checked) {
 			Core::App().settings().fork().setHideFromBlockedUsers(checked);
 		});
+
+	builder.addSkip();
+	builder.addDivider();
+	builder.addSkip();
+
+	builder.addSubsectionTitle({
+		.id = u"fork/cloudflare_stt"_q,
+		.title = tr::lng_fork_cf_stt(),
+		.keywords = {
+			u"cloudflare"_q,
+			u"stt"_q,
+			u"speech"_q,
+			u"voice"_q,
+			u"transcription"_q,
+			u"account id"_q,
+			u"api token"_q,
+		},
+	});
+	builder.add([](const WidgetContext &ctx) {
+		auto content = object_ptr<Ui::VerticalLayout>(ctx.container);
+		SetupCloudflareStt(content.data(), ctx.controller);
+		return SectionBuilder::WidgetToAdd{ .widget = std::move(content) };
+	});
 
 	builder.addSkip();
 	builder.addDivider();

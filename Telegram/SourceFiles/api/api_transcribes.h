@@ -7,10 +7,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include "base/weak_ptr.h"
 #include "mtproto/sender.h"
 #include "spellcheck/spellcheck_types.h"
 
 class ApiWrap;
+class DocumentData;
+class QNetworkAccessManager;
 
 namespace Main {
 class Session;
@@ -27,9 +30,10 @@ struct SummaryEntry {
 	mtpRequestId requestId = 0;
 };
 
-class Transcribes final {
+class Transcribes final : public base::has_weak_ptr {
 public:
 	explicit Transcribes(not_null<ApiWrap*> api);
+	~Transcribes();
 
 	struct Entry {
 		QString result;
@@ -38,10 +42,12 @@ public:
 		bool toolong = false;
 		bool pending = false;
 		bool roundview = false;
+		bool cloudflare = false;
 		mtpRequestId requestId = 0;
 	};
 
 	void toggle(not_null<HistoryItem*> item);
+	void settingsChanged();
 	[[nodiscard]] const Entry &entry(not_null<HistoryItem*> item) const;
 
 	void toggleSummary(not_null<HistoryItem*> item);
@@ -51,6 +57,7 @@ public:
 
 	void apply(const MTPDupdateTranscribedAudio &update);
 
+	[[nodiscard]] bool cloudflareFor(not_null<HistoryItem*> item) const;
 	[[nodiscard]] bool freeFor(not_null<HistoryItem*> item) const;
 	[[nodiscard]] bool isRated(not_null<HistoryItem*> item) const;
 	void rate(not_null<HistoryItem*> item, bool isGood);
@@ -62,6 +69,16 @@ public:
 
 private:
 	void load(not_null<HistoryItem*> item);
+	void loadCloudflare(not_null<HistoryItem*> item);
+	struct CloudflareTask;
+	void cancelCloudflare(const std::shared_ptr<CloudflareTask> &task);
+	[[nodiscard]] bool validCloudflare(
+		const std::shared_ptr<CloudflareTask> &task);
+	void readCloudflare(const std::shared_ptr<CloudflareTask> &task);
+	void finishCloudflare(
+		const std::shared_ptr<CloudflareTask> &task,
+		const QString &result,
+		bool failed);
 	void summarize(not_null<HistoryItem*> item);
 
 	const not_null<Main::Session*> _session;
@@ -75,6 +92,9 @@ private:
 	base::flat_map<uint64, FullMsgId> _ids;
 
 	base::flat_map<FullMsgId, SummaryEntry> _summaries;
+	std::unique_ptr<QNetworkAccessManager> _cloudflareNetwork;
+	base::flat_map<FullMsgId, std::shared_ptr<CloudflareTask>> _cloudflareTasks;
+	rpl::lifetime _lifetime;
 
 };
 

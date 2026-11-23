@@ -11,6 +11,205 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ffmpeg/ffmpeg_utility.h"
 
 namespace Media {
+namespace Audio {
+namespace {
+
+constexpr auto kMaxVideoBytes = int64(256) * 1024 * 1024;
+constexpr auto kMaxAudioBytes = int64(64) * 1024 * 1024;
+constexpr auto kMaxAudioPackets = 100000;
+
+bool HasEncryptionSideData(const AVPacketSideData *data, int count) {
+	return av_packet_side_data_get(data, count, AV_PKT_DATA_ENCRYPTION_INFO)
+		|| av_packet_side_data_get(
+			data,
+			count,
+			AV_PKT_DATA_ENCRYPTION_INIT_INFO);
+}
+
+int64 SeekPosition(int64 offset, int whence, int64 current, int64 size) {
+	whence &= ~AVSEEK_FORCE;
+	if (whence == AVSEEK_SIZE) {
+		return size;
+	}
+	const auto base = (whence == SEEK_SET) ? int64(0)
+		: (whence == SEEK_CUR) ? current
+		: (whence == SEEK_END) ? size
+		: int64(-1);
+	if (base < 0 || offset < -base || offset > size - base) {
+		return AVERROR(EINVAL);
+	}
+	return base + offset;
+}
+
+int64_t SeekInput(void *opaque, int64_t offset, int whence) {
+	const auto wrap = static_cast<FFmpeg::ReadBytesWrap*>(opaque);
+	const auto result = SeekPosition(offset, whence, wrap->offset, wrap->size);
+	if (result >= 0 && (whence & ~AVSEEK_FORCE) != AVSEEK_SIZE) {
+		wrap->offset = result;
+	}
+	return result;
+}
+
+struct BoundedOutput {
+	FFmpeg::WriteBytesWrap wrap;
+
+#if DA_FFMPEG_CONST_WRITE_CALLBACK
+	static int Write(void *opaque, const uint8_t *buffer, int size) {
+#else
+	static int Write(void *opaque, uint8_t *buffer, int size) {
+#endif
+		const auto self = static_cast<BoundedOutput*>(opaque);
+		if (size < 0 || size > kMaxAudioBytes - self->wrap.offset) {
+			return AVERROR(ENOSPC);
+		}
+		return FFmpeg::WriteBytesWrap::Write(&self->wrap, buffer, size);
+	}
+
+	static int64_t Seek(void *opaque, int64_t offset, int whence) {
+		const auto self = static_cast<BoundedOutput*>(opaque);
+		const auto result = SeekPosition(
+			offset,
+			whence,
+			self->wrap.offset,
+			self->wrap.content.size());
+		if (result >= 0 && (whence & ~AVSEEK_FORCE) != AVSEEK_SIZE) {
+			self->wrap.offset = result;
+		}
+		return result;
+	}
+};
+
+}
+
+QByteArray ExtractVideoAudio(const QByteArray &video) {
+	using namespace FFmpeg;
+
+	if (video.isEmpty() || video.size() > kMaxVideoBytes) {
+		return {};
+	}
+	auto inputWrap = ReadBytesWrap{
+		.size = video.size(),
+		.data = reinterpret_cast<const uchar*>(video.constData()),
+	};
+	auto input = MakeFormatPointer(
+		&inputWrap,
+		&ReadBytesWrap::Read,
+		nullptr,
+		&SeekInput);
+	if (!input
+		|| input->iformat != av_find_input_format("mov")
+		|| AvErrorWrap(avformat_find_stream_info(input.get(), nullptr))) {
+		return {};
+	}
+	const auto streamId = av_find_best_stream(
+		input.get(),
+		AVMEDIA_TYPE_AUDIO,
+		-1,
+		-1,
+		nullptr,
+		0);
+	if (streamId < 0) {
+		return {};
+	}
+	const auto inStream = input->streams[streamId];
+	if (inStream->codecpar->codec_id != AV_CODEC_ID_AAC
+		|| !inStream->codecpar->extradata
+		|| inStream->codecpar->extradata_size <= 0
+		|| HasEncryptionSideData(
+			inStream->codecpar->coded_side_data,
+			inStream->codecpar->nb_coded_side_data)
+		|| inStream->time_base.num <= 0
+		|| inStream->time_base.den <= 0) {
+		return {};
+	}
+	for (auto i = 0U; i != input->nb_streams; ++i) {
+		if (i != unsigned(streamId)) {
+			input->streams[i]->discard = AVDISCARD_ALL;
+		}
+	}
+
+	auto outputWrap = BoundedOutput();
+	auto output = MakeWriteFormatPointer(
+		&outputWrap,
+		nullptr,
+		&BoundedOutput::Write,
+		&BoundedOutput::Seek,
+		"mp4"_q);
+	if (!output) {
+		return {};
+	}
+	const auto outStream = avformat_new_stream(output.get(), nullptr);
+	if (!outStream || AvErrorWrap(avcodec_parameters_copy(
+			outStream->codecpar,
+			inStream->codecpar))) {
+		return {};
+	}
+	outStream->codecpar->codec_tag = 0;
+	outStream->time_base = inStream->time_base;
+	if (AvErrorWrap(avformat_write_header(output.get(), nullptr))
+		|| output->pb->error < 0
+		|| outStream->time_base.num <= 0
+		|| outStream->time_base.den <= 0) {
+		return {};
+	}
+
+	auto packet = AVPacket();
+	av_init_packet(&packet);
+	auto processed = 0;
+	auto copied = 0;
+	while (true) {
+		const auto error = AvErrorWrap(av_read_frame(input.get(), &packet));
+		if (error.code() == AVERROR_EOF) {
+			if (input->pb->error < 0 && input->pb->error != AVERROR_EOF) {
+				return {};
+			}
+			break;
+		} else if (error) {
+			return {};
+		}
+		const auto guard = gsl::finally([&] {
+			av_packet_unref(&packet);
+		});
+		if (packet.stream_index != streamId) {
+			continue;
+		}
+		if (++processed > kMaxAudioPackets
+			|| HasEncryptionSideData(packet.side_data, packet.side_data_elems)) {
+			return {};
+		}
+		if (packet.flags & AV_PKT_FLAG_DISCARD) {
+			if (copied) {
+				return {};
+			}
+			continue;
+		}
+		if (packet.size <= 0
+			|| (packet.flags & AV_PKT_FLAG_CORRUPT)
+			|| packet.pts == AV_NOPTS_VALUE
+			|| packet.dts == AV_NOPTS_VALUE
+			|| packet.duration < 0) {
+			return {};
+		}
+		++copied;
+		av_packet_rescale_ts(&packet, inStream->time_base, outStream->time_base);
+		packet.stream_index = outStream->index;
+		packet.pos = -1;
+		if (AvErrorWrap(av_interleaved_write_frame(output.get(), &packet))
+			|| output->pb->error < 0) {
+			return {};
+		}
+	}
+	if (!copied || AvErrorWrap(av_write_trailer(output.get()))) {
+		return {};
+	}
+	avio_flush(output->pb);
+	if (output->pb->error < 0) {
+		return {};
+	}
+	return std::move(outputWrap.wrap.content);
+}
+
+}
 
 [[nodiscard]] AudioEditResult TrimAudioToRange(
 		const QByteArray &content,

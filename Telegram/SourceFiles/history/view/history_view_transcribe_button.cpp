@@ -338,7 +338,9 @@ bool TranscribeButton::hasLock() const {
 	if (_summarize) {
 		return transcribes->summary(_item).premiumRequired;
 	}
-	if (transcribes->freeFor(_item) || transcribes->trialsCount()) {
+	if (transcribes->cloudflareFor(_item)
+		|| transcribes->freeFor(_item)
+		|| transcribes->trialsCount()) {
 		return false;
 	}
 	const auto until = transcribes->trialsRefreshAt();
@@ -378,7 +380,8 @@ ClickHandlerPtr TranscribeButton::link() {
 		if (!item) {
 			return;
 		}
-		if (session->premium()) {
+		if (session->premium()
+			|| (!summarize && session->api().transcribes().cloudflareFor(item))) {
 			auto &transcribes = session->api().transcribes();
 			return summarize
 				? transcribes.toggleSummary(item)

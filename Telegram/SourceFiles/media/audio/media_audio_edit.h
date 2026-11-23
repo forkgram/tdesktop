@@ -11,6 +11,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Media {
 
+namespace Audio {
+
+[[nodiscard]] QByteArray ExtractVideoAudio(const QByteArray &video);
+
+}
+
 struct AudioEditResult {
 	QByteArray content;
 	VoiceWaveform waveform;

@@ -591,6 +591,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 "lng_fork_extract_media_from_preview" = "Send media from link preview as attachment";
 
+"lng_fork_cf_stt" = "Cloudflare for Voice-to-Text";
+"lng_fork_cf_stt_enabled" = "Enable";
+"lng_fork_cf_stt_account" = "Cloudflare Account ID";
+"lng_fork_cf_stt_token" = "Cloudflare API token";
+
 "lng_fork_link_replacements" = "Replace links on paste";
 "lng_fork_link_replacements_about" = "Links you paste into a message are rewritten by the rules below. Useful for services whose previews Telegram cannot render.";
 "lng_fork_link_replacements_rules" = "Replacement rules";
