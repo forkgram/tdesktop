@@ -92,8 +92,10 @@ def versions_in(feed):
 
 async def main():
     updates, beta = find_update_files(ARTIFACTS_DIR)
-    if not updates:
-        sys.exit(f"No update files found under {ARTIFACTS_DIR!r}.")
+    if beta or {platform: item[0] for platform, item in updates.items()} != {
+        "win": 7004006, "win64": 7004006, "winarm": 7004006,
+    }:
+        sys.exit("Expected three stable Windows updates for 7.4.6.")
     if not os.path.isfile(THUMB):
         sys.exit(f"No thumbnail at {THUMB!r} (forgot to sparse-checkout it?).")
 
@@ -130,7 +132,20 @@ async def main():
         print(f"Publishing a {'beta' if beta else 'stable'} release into "
               f"{'/'.join(channels)}.")
 
-        for platform, (version, path) in sorted(updates.items()):
+        pending = {}
+        for platform, (version, path) in updates.items():
+            current = merged.get(platform, {})
+            entries = [current.get(chan, {}).get(key, "") for chan, key in targets]
+            versions = [int(entry.partition(":")[0] or 0) for entry in entries]
+            if any(current_version > version for current_version in versions):
+                sys.exit(f"{platform} already has a newer update.")
+            if any(current_version < version for current_version in versions):
+                pending[platform] = (version, path)
+        if not pending:
+            print("All three Windows updates are already in the feed.")
+            return
+
+        for platform, (version, path) in sorted(pending.items()):
             if DRY_RUN:
                 entry = f"{version}:{FILES}#<dry-run>"
                 print(f"[dry-run] would upload {path} -> {platform}")

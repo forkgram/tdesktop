@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from telethon import TelegramClient
 from telethon.extensions import markdown
 from telethon.sessions import StringSession
+from telethon.tl.functions.messages import SendScheduledMessagesRequest
 from telethon.tl.types import DocumentAttributeFilename
 
 CHANNEL = os.environ["TG_PUBLIC_CHANNEL"]
@@ -70,9 +71,10 @@ async def main():
         print(f"  {type(e).__name__}: {shown[e.offset:e.offset + e.length]!r} "
               f"-> {getattr(e, 'url', '')}")
 
-    if not 0 < SCHEDULE_DAYS < 365:
-        sys.exit(f"TG_SCHEDULE_DAYS must be within 1..364, got {SCHEDULE_DAYS}.")
-    when = datetime.now(timezone.utc) + timedelta(days=SCHEDULE_DAYS)
+    if not 0 <= SCHEDULE_DAYS < 365:
+        sys.exit(f"TG_SCHEDULE_DAYS must be within 0..364, got {SCHEDULE_DAYS}.")
+    when = (datetime.now(timezone.utc) + timedelta(days=SCHEDULE_DAYS)
+            if SCHEDULE_DAYS else None)
 
     api_id = int(os.environ["TG_API_ID"])
     api_hash = os.environ["TG_API_HASH"]
@@ -88,11 +90,24 @@ async def main():
         first_line = next(iter((previous.message or "").splitlines()), "")
         print(f"Replying to #{previous.id} of {previous.date:%Y-%m-%d}: "
               f"{first_line!r}")
+        if previous.message == shown:
+            print(f"Release already posted as message #{previous.id}.")
+            return
         await warn_if_unsent(client, channel, asset_name)
 
         if DRY_RUN:
             print("\n[dry-run] not uploading.")
             return
+
+        if when is None:
+            async for scheduled in client.iter_messages(channel, scheduled=True):
+                if document_name(scheduled) == asset_name and scheduled.message == shown:
+                    await client(SendScheduledMessagesRequest(channel, [scheduled.id]))
+                    posted = await find_previous(client, channel, asset_name)
+                    if not posted or posted.message != shown:
+                        sys.exit("Sent the scheduled message but could not verify the public post.")
+                    print(f"Published message #{posted.id} in {CHANNEL}.")
+                    return
 
         msg = await client.send_file(
             channel, ASSET_PATH,
@@ -102,6 +117,9 @@ async def main():
             thumb=THUMB,
             reply_to=previous.id,
             schedule=when)
+        if when is None:
+            print(f"Published message #{msg.id} in {CHANNEL}.")
+            return
         print(f"\nscheduled message #{msg.id} in {CHANNEL} for {when:%Y-%m-%d} "
               f"({SCHEDULE_DAYS} days out); send it from the Scheduled queue.")
 
