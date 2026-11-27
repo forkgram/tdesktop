@@ -88,6 +88,80 @@ class CommitHashArtifactTests(unittest.TestCase):
 					exempt=("input",),
 				)
 
+	def test_finish_scan_skips_ignored_local_storage(self):
+		line = "commit: abcdef1234567\n"
+		for tracked in (None, "work/logs/run.log", "evidence/scan.json", "task.md"):
+			with (
+				self.subTest(tracked=tracked),
+				tempfile.TemporaryDirectory() as temporary,
+			):
+				root = Path(temporary)
+				slot = root / "slot"
+				directory = write_task(slot, status="in-progress")
+				(directory / "work" / "result.md").write_text(
+					f"""# Task result: {TASK_ID}
+STATUS: DONE
+Outcome: changed
+Touched: tracked.txt
+Verdict: APPROVED
+Test-Report: work/test.md
+Checkout: clean-buildable
+""",
+					encoding="utf-8",
+				)
+				(directory / "work" / "test.md").write_text(
+					"# Adaptive evidence\n",
+					encoding="utf-8",
+				)
+				for exempt in (
+					directory / ".local" / "runs" / "run-1" / "scan.json",
+					directory / "input" / "REPORT.md",
+				):
+					exempt.parent.mkdir(parents=True)
+					exempt.write_text(line, encoding="utf-8")
+				if tracked is not None:
+					path = directory / tracked
+					path.parent.mkdir(parents=True, exist_ok=True)
+					with path.open("a", encoding="utf-8") as file:
+						file.write(line)
+				config = {
+					"ai_main": str(root / "main"),
+					"checkout_tag": "macbook-twork",
+					"slot_worktree": str(slot),
+					"source_root": str(root / "source"),
+				}
+				arguments = SimpleNamespace(
+					task=TASK_ID,
+					status="approved",
+					model="claude-opus-5",
+				)
+				with (
+					mock.patch.object(
+						workspace,
+						"task_action_config",
+						return_value=(config, slot),
+					),
+					mock.patch.object(workspace, "ensure_source_clean"),
+					mock.patch.object(workspace, "validate_source_state"),
+					mock.patch.object(workspace, "delete_source_refs"),
+					mock.patch.object(workspace, "commit_paths") as commit,
+					contextlib.redirect_stdout(io.StringIO()),
+				):
+					if tracked is None:
+						workspace.command_finish(arguments)
+					else:
+						with self.assertRaises(workspace.WorkspaceError) as caught:
+							workspace.command_finish(arguments)
+				if tracked is None:
+					commit.assert_called_once()
+					state = workspace.load_state(slot, directory / "state.yaml")
+					self.assertEqual(state["status"], "approved")
+				else:
+					self.assertEqual(
+						str(caught.exception),
+						f"Persisted commit hash found in {directory / tracked}",
+					)
+
 
 class FrozenDate(datetime.date):
 	@classmethod
@@ -9258,6 +9332,78 @@ class ProjectBranchTest(unittest.TestCase):
 		pin = git(second, "rev-parse", "HEAD:dep")
 		self.assertEqual(git(second / "dep", "rev-parse", f"{pin}^"), orphan)
 		self.push(second, second_slot, "xps-second", TASK_B)
+		self.assertEqual(git(self.dep, "rev-parse", f"refs/heads/{PROJECT}"), pin)
+
+	def leave_absorbed_module_branch(self, genuine=False):
+		"""An earlier cycle's dep project branch the base took in under new hashes."""
+		work = self.root / "leftover"
+		git(self.root, "clone", "--quiet", str(self.dep), str(work))
+		write_file(work, "earlier.txt", "earlier\n")
+		git(work, "add", "earlier.txt")
+		git(work, "commit", "-m", "Earlier cycle fix")
+		earlier = git(work, "rev-parse", "HEAD")
+		if genuine:
+			write_file(work, "unpublished.txt", "unpublished\n")
+			git(work, "add", "unpublished.txt")
+			git(work, "commit", "-m", "Unpublished work")
+		git(work, "push", "--quiet", "origin", f"HEAD:refs/heads/{PROJECT}")
+		leftover = git(work, "rev-parse", "HEAD")
+		git(work, "checkout", "--quiet", "--detach", "origin/master")
+		write_file(work, "master.txt", "master\n")
+		git(work, "add", "master.txt")
+		git(work, "commit", "-m", "Advance module master")
+		git(work, "cherry-pick", earlier)
+		git(work, "push", "--quiet", "origin", "HEAD:refs/heads/master")
+		absorbed = git(work, "rev-parse", "HEAD")
+		base = self.clone("absorb")
+		git(base / "dep", "fetch", "--quiet", "origin")
+		git(base / "dep", "checkout", "--quiet", "--detach", absorbed)
+		git(base, "add", "dep")
+		git(base, "commit", "-m", "Absorb the earlier cycle")
+		for branch in ("alpha", PROJECT):
+			git(base, "push", "--quiet", "private", f"HEAD:refs/heads/{branch}")
+		return leftover, absorbed
+
+	def test_push_rebases_an_absorbed_module_branch_onto_the_pin(self):
+		leftover, absorbed = self.leave_absorbed_module_branch()
+		first = self.clone("first")
+		slot = project_slot(self.root, TASK_A, "xps-first")
+		begin_task(first, TASK_A)
+		commit_task(first, TASK_A, "first.txt")
+		self.sync(first, slot, "xps-first", TASK_A)
+		pushed = self.push(first, slot, "xps-first", TASK_A)
+		self.assertEqual(pushed["submodules"], ["dep"])
+		self.assertEqual(git(self.dep, "rev-parse", f"refs/heads/{PROJECT}"), absorbed)
+		self.assertEqual(
+			git(self.private, "rev-parse", f"refs/heads/{PROJECT}"),
+			git(first, "rev-parse", "HEAD"),
+		)
+
+	def test_push_keeps_a_module_branch_with_work_the_pin_lacks(self):
+		leftover, _ = self.leave_absorbed_module_branch(genuine=True)
+		first = self.clone("first")
+		slot = project_slot(self.root, TASK_A, "xps-first")
+		begin_task(first, TASK_A)
+		commit_task(first, TASK_A, "first.txt")
+		self.sync(first, slot, "xps-first", TASK_A)
+		with self.assertRaisesRegex(workspace.WorkspaceError, "moved since project-sync"):
+			self.push(first, slot, "xps-first", TASK_A)
+		self.assertEqual(git(self.dep, "rev-parse", f"refs/heads/{PROJECT}"), leftover)
+
+	def test_sync_builds_module_work_on_the_pin_not_an_absorbed_branch(self):
+		_, absorbed = self.leave_absorbed_module_branch()
+		first = self.clone("first")
+		git(self.private, "update-ref", "-d", f"refs/heads/{PROJECT}")
+		git(first, "fetch", "--quiet", "--prune", "private")
+		slot = project_slot(self.root, TASK_A, "xps-first")
+		begin_task(first, TASK_A)
+		commit_task(first, TASK_A, "first.txt", "first-module.txt")
+		pin = git(first, "rev-parse", "HEAD:dep")
+		result = self.sync(first, slot, "xps-first", TASK_A)
+		self.assertFalse(result["synced"])
+		self.assertEqual(git(first, "rev-parse", "HEAD:dep"), pin)
+		self.assertEqual(git(first / "dep", "rev-parse", f"{pin}^"), absorbed)
+		self.push(first, slot, "xps-first", TASK_A)
 		self.assertEqual(git(self.dep, "rev-parse", f"refs/heads/{PROJECT}"), pin)
 
 	def test_a_base_fix_survives_an_incoming_sync(self):

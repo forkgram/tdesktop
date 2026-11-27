@@ -7,10 +7,16 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "info/profile/info_profile_inner_widget.h"
 
-#include "info/info_controller.h"
-#include "info/info_memento.h"
-#include "info/info_wrap_widget.h"
-#include "info/profile/info_profile_widget.h"
+#include "api/api_peer_photo.h"
+#include "apiwrap.h"
+#include "data/data_changes.h"
+#include "data/data_channel.h"
+#include "data/data_file_origin.h"
+#include "data/data_forum_topic.h"
+#include "data/data_peer.h"
+#include "data/data_photo.h"
+#include "data/data_saved_sublist.h"
+#include "data/data_user.h"
 #include "info/profile/tabs/adapters/info_profile_tab_chats.h"
 #include "info/profile/tabs/adapters/info_profile_tab_media.h"
 #include "info/profile/tabs/adapters/info_profile_tab_members.h"
@@ -19,27 +25,21 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "info/profile/tabs/adapters/info_profile_tab_saved.h"
 #include "info/profile/tabs/adapters/info_profile_tab_stories.h"
 #include "info/profile/tabs/info_profile_tabs_host.h"
+#include "info/profile/info_profile_actions.h"
 #include "info/profile/info_profile_bot_media_previews.h"
 #include "info/profile/info_profile_icon.h"
 #include "info/profile/info_profile_members.h"
 #include "info/profile/info_profile_shared_media_classic.h"
 #include "info/profile/info_profile_top_bar.h"
-#include "info/profile/info_profile_actions.h"
 #include "info/profile/info_profile_values.h"
+#include "info/profile/info_profile_widget.h"
 #include "info/saved/info_saved_music_widget.h"
-#include "data/data_changes.h"
-#include "data/data_channel.h"
-#include "data/data_forum_topic.h"
-#include "data/data_peer.h"
-#include "data/data_photo.h"
-#include "data/data_file_origin.h"
-#include "data/data_user.h"
-#include "data/data_saved_sublist.h"
+#include "info/info_controller.h"
+#include "info/info_memento.h"
+#include "info/info_wrap_widget.h"
 #include "info_profile_actions.h"
-#include "main/main_session.h"
-#include "apiwrap.h"
-#include "api/api_peer_photo.h"
 #include "lang/lang_keys.h"
+#include "main/main_session.h"
 #include "ui/text/custom_emoji_helper.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/checkbox.h"
@@ -47,12 +47,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/scroll_area.h"
 #include "ui/widgets/shadow.h"
 #include "ui/wrap/fade_wrap.h"
-#include "ui/wrap/vertical_layout.h"
 #include "ui/wrap/slide_wrap.h"
+#include "ui/wrap/vertical_layout.h"
 #include "ui/new_badges.h"
 #include "ui/painter.h"
-#include "ui/vertical_list.h"
 #include "ui/ui_utility.h"
+#include "ui/vertical_list.h"
+
 #include "styles/style_info.h"
 
 namespace Info {
@@ -193,7 +194,7 @@ object_ptr<Ui::RpWidget> InnerWidget::setupContent(
 
 	const auto thirdColumn = (_controller->wrap() == Wrap::Side);
 	const auto bot = (_topic || _sublist) ? nullptr : _peer->asBot();
-	const auto tabs = bot || (UseProfileMediaTabs() && !thirdColumn);
+	const auto tabs = UseProfileMediaTabs() && !thirdColumn;
 	auto sharedTracker = Ui::MultiSlideTracker();
 	if (!tabs) {
 		auto sharedMediaWidget = SetupSharedMediaClassic(
@@ -210,17 +211,13 @@ object_ptr<Ui::RpWidget> InnerWidget::setupContent(
 		blocks.add(std::move(sharedMediaWidget));
 	}
 
-	const auto addTabsHost = [&] {
+	const auto appendSharedTabs = [&](auto &tabs) {
 		using namespace rpl::mappers;
 		const auto tabsPeer = _sublist ? _sublist->sublistPeer() : _peer;
 		const auto topicRootId = _topic ? _topic->rootId() : MsgId();
 		const auto monoforumPeerId = _sublist
 			? _sublist->sublistPeer()->id
 			: PeerId();
-		auto tabs = std::vector<MediaTabDescriptor>();
-		if (bot) {
-			tabs.push_back(MakeBotMediaPreviewsTab(bot));
-		}
 		const auto countValue = [&](Storage::SharedMediaType type) {
 			return SharedMediaCountValue(
 				_peer,
@@ -294,6 +291,15 @@ object_ptr<Ui::RpWidget> InnerWidget::setupContent(
 				tabs.push_back(MakeSimilarPeersTabDescriptor(_peer));
 			}
 		}
+	};
+	const auto addTabsHost = [&] {
+		auto descriptors = std::vector<MediaTabDescriptor>();
+		if (bot) {
+			descriptors.push_back(MakeBotMediaPreviewsTab(bot));
+		}
+		if (tabs) {
+			appendSharedTabs(descriptors);
+		}
 		auto tabsHost = object_ptr<TabsHost>(
 			result.data(),
 			TabsHost::Descriptor{
@@ -307,7 +313,7 @@ object_ptr<Ui::RpWidget> InnerWidget::setupContent(
 						_onlineCount.fire_copy(count);
 					},
 				},
-				.tabs = std::move(tabs),
+				.tabs = std::move(descriptors),
 			});
 		const auto raw = tabsHost.data();
 		_tabsHost = raw;
@@ -354,7 +360,7 @@ object_ptr<Ui::RpWidget> InnerWidget::setupContent(
 		blocks.addSeparator();
 		blocks.add(makeMembersPart(result.data(), std::move(shown)));
 	}
-	if (tabs) {
+	if (tabs || bot) {
 		addTabsHost();
 	}
 	Ui::AddSkip(result.data(), skip);

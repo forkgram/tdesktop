@@ -172,6 +172,12 @@ Steps:
    `<PROJECT_FILE>` is not `none`, read its title and first paragraph to know
    the area; expand only concretely relevant dependencies and references under
    that policy. Current task requirements and source govern the plan.
+   Read `.agents/shared/keep-it-simple.md` too. It is the owner's rule for
+   the plan: DON'T OVERENGINEER. Plan the simplest design that fully does the
+   task, as good and fast as possible on the normal path. Add no structure,
+   generality, options, checks or guarantees the task does not need. Rare
+   cases heal by the next use, retry or restart, unless a never-happen outcome
+   it lists is at stake.
 3. Search the codebase for files, classes, functions, and patterns related to the task.
 4. Read the relevant source and adjacent behavior needed to resolve the task's
    requirements and risks. Use targeted lookups for remaining ambiguities.
@@ -229,7 +235,12 @@ plan introduces: the role boundary or constraint that requires it — and for a
 new entry point, switch, or hook, which existing ones were checked and why
 none fits. State where the change is contained: the fewest insertion points
 into existing shared modules, with platform-specific work behind the
-`Platform::` seam rather than inline conditional blocks.>
+`Platform::` seam rather than inline conditional blocks.
+Then state the guarantee level (keep-it-simple.md): the never-happen
+outcomes this change can reach and how each is prevented, and in one line
+each, how the edge cases it meets heal themselves. Promise nothing more than
+the closest shipped analogue gives unless a never-happen outcome requires
+it.>
 
 ## Files to Modify
 <list of files that will be created or modified>
@@ -308,8 +319,14 @@ Read these files:
 
 Assess the plan:
 
+First read `.agents/shared/keep-it-simple.md`, the owner's rule: DON'T
+OVERENGINEER. Every item below is judged under it.
+
 1. Correctness: Are the file paths and line references accurate? Does the plan reference real functions and types?
-2. Completeness: Are there missing steps? Edge cases not handled?
+2. Completeness: Are there missing steps? Is every never-happen outcome the
+   change can reach prevented, and does every edge case it meets recover by
+   the next use, retry or restart? Handling beyond that is not completeness;
+   it comes out of the plan.
 3. Code quality: Will the plan minimize code duplication? Does it follow existing codebase patterns from AGENTS.md?
 4. Approach fit — judge this adversarially, as the reviewer who must later
    defend the diff. Anchor on precedent: find the closest existing feature of
@@ -334,6 +351,14 @@ Assess the plan:
      implementation and no second user, a state machine over a linear flow, a
      wrapper around a single call, and scaffolding for a testing style this
      repository does not practice serve no purpose and come out of the plan.
+   - Guarantee budget: compare what the plan promises in rare cases
+     (interruptions, concurrency, failures, unusual input) with what its
+     shipped analogue gives. Remove every promise that no never-happen
+     outcome of keep-it-simple.md requires. That file lists the simpler
+     shapes to use instead. Each extra promise is a review surface that keeps
+     the loop open. A plan whose promises are the bulk of its machinery is
+     `Approach: rejected`, with the simpler self-healing shape as its
+     direction.
    - New files are not the problem: a focused file bounding a coherent role
      beats both growing a mega-module and scattering through one; judge
      whether the boundary does work, not whether it is new.
@@ -589,6 +614,55 @@ A wording or style suggestion is non-blocking unless it causes incorrect
 behavior, unsafe use, misleading build instructions, a repository-rule
 violation, or a material maintenance defect.
 
+### Review scope block
+
+Append this block to the prompt of every lens, general review, synthesis,
+focused re-review, review fix and convergence assessment. Replace `<BASE>`
+with `refs/ai-tasks/<TASK_ID>/base`. The rule is pipeline "Review scope".
+
+~~~text
+REVIEW SCOPE. Judge this task's change, not the code around it. A finding
+is BLOCKING only when it is attributable to the change:
+- INTRODUCED: code this task wrote, including earlier fix rounds, causes
+  it. On <BASE> it does not happen, and no equivalent existing caller of the
+  same mechanism (a sibling action, the same input) suffers it there; or
+- REQUESTED: the behavior the task asks for is not achieved in a scenario
+  its acceptance names.
+Everything else is PRE-EXISTING, even in the same function, and even when
+the change routes one more caller through shared code that already fails
+the same way for an equivalent caller on <BASE>. A scenario that needs
+input no producer is known to send is PRE-EXISTING unless the change
+itself parses that input. Acceptance wording about shared machinery
+("without crashes", "no stale pointers") means no regression against <BASE>.
+It never makes an existing defect a requirement. The exception is a change
+that materially widens exposure: a rare path made common, or a path no base
+caller can take. That is INTRODUCED; name the new trigger.
+Check the base with `git -C <SOURCE_ROOT> show <BASE>:<path>` before
+calling a finding INTRODUCED. Give every BLOCKING finding a line
+`- Attribution: INTRODUCED <hunk or fix round> | REQUESTED <quoted
+acceptance line>`, with the base evidence. Report PRE-EXISTING defects under
+`## Pre-existing`, each with base evidence and severity. They are
+follow-up candidates: they never request a fix and never decide a verdict.
+KEEP IT SIMPLE (owner rule, `.agents/shared/keep-it-simple.md`). An
+INTRODUCED finding in a rare order is BLOCKING only when it reaches a
+never-happen outcome:
+- a crash, UB, deadlock or frozen UI;
+- a logout;
+- irreversible loss or corruption of user data;
+- a security or privacy failure;
+- data that claims to be what it is not;
+- a state that never recovers by the next use, retry or restart;
+- a slower normal path.
+Rare orders include an interrupted operation, concurrent or reentrant
+calls, a crash window, a timing no user produces on purpose, and input no
+producer sends in practice. Any other such finding goes under `## Dropped`,
+with the way it heals. A broken normal path stays BLOCKING. A fix repairs with
+the smallest change and prefers removing machinery to adding it. Never
+demand stronger guarantees or more structure than the closest shipped
+feature has. Needless machinery the task added is a valid finding, and its
+fix is deletion.
+~~~
+
 ### Harness tasks
 
 When plan.md says `Code: harness` (pipeline, "Harness tasks"), the initial
@@ -649,7 +723,8 @@ can be rerun cleanly.
 
 Review only this task's diff under your assigned angle. Search outside the diff
 only after the lens is applicable and when call-site or repository context is
-needed. Do not report pre-existing problems as task findings.
+needed. Apply the review scope block below: a pre-existing problem goes under
+`## Pre-existing`, never under Findings.
 
 A finding is BLOCKING only when it names a concrete wrong result, crash, race,
 security or data-safety failure, material performance regression, violated
@@ -666,8 +741,12 @@ Write <WORK_DIR>/review<R>-<LENS>.md:
 For CLEAN/FINDINGS: relevant full files and adjacent surfaces examined.>
 
 ## Findings
-<For each: title, file/line, Severity: BLOCKING | NON_BLOCKING, concrete
-failure, and specific fix. Omit when empty.>
+<For each: title, file/line, Severity: BLOCKING | NON_BLOCKING, Attribution
+for a BLOCKING one, concrete failure, and specific fix. Omit when empty.>
+
+## Pre-existing
+<Defects equally present on the base: title, base file/line, severity. Omit
+when empty.>
 
 ## Verdict: NOT_APPLICABLE | CLEAN | FINDINGS
 ~~~
@@ -775,9 +854,11 @@ Read:
   the code needed to confirm/drop a finding, validate a NOT_APPLICABLE proof,
   or resolve a contradiction
 
-Independently review correctness, completeness, edge/error paths, unintended
-regressions, integration, proportionality, repository conventions, and the
-evidence design. Do not defer anything to a specialist.
+Independently review this change's correctness, completeness, edge/error
+paths, unintended regressions, integration, proportionality, repository
+conventions, and the evidence design, under the review scope block below.
+Completeness means the requested behavior, not the robustness of the code
+the change passes through. Do not defer anything to a specialist.
 
 Read <WORK_DIR>/health-check.md on pass 1. Its errors (an include into a
 CMake target the including target does not link, where no such include
@@ -811,7 +892,8 @@ state. With `Lenses: none`, also write `review1.md` now; there is no pass 2.
 
 On pass 2, account for all five lenses (on a harness task, the named ones).
 Confirm every finding against the code and drop it when the concrete failure
-does not hold. Accept `NOT_APPLICABLE`
+does not hold. Check each blocking finding's attribution against the base,
+and move a pre-existing one to `## Pre-existing`. Accept `NOT_APPLICABLE`
 only when its complete-diff proof establishes that no owned mechanism changed.
 If that proof contradicts a hunk or is merely a severity estimate, write
 `Incomplete lens: <name> — <owned mechanism>` and return without an
@@ -858,9 +940,12 @@ domain specialist>
 <blocking findings only; omit when approved>
 ## Dropped
 <non-blocking or rejected specialist findings, with reason>
+## Pre-existing
+<every reviewer's pre-existing defects, merged, with base evidence and
+severity; the performer's discovered follow-up candidates>
 
 An APPROVED verdict requires no blocking finding and complete evidence
-reconciliation. NEEDS_CHANGES requires at least one blocking finding.
+reconciliation. Pre-existing entries never affect it. NEEDS_CHANGES requires at least one blocking finding.
 ~~~
 
 ### Focused general re-review
@@ -883,7 +968,8 @@ return `CONVERGENCE_REQUIRED`.
 
 Do not restart the complete-diff review. Verify each repaired blocker, inspect
 the fix for regressions in its actual data/control/lifetime boundary, and check
-that no undeclared path changed. For every prior general and specialist approval,
+that no undeclared path changed. Apply the review scope block below to every
+finding, including a regression you find in code the fix only passes by. For every prior general and specialist approval,
 record `CARRIED` with why the fix did not touch its exact code or invariant, or
 `INVALIDATED` with the concrete changed question. Presence of a broad surface is
 not invalidation.
@@ -908,7 +994,11 @@ Write <WORK_DIR>/review<R>-focused.md and <WORK_DIR>/review<R>.md with:
 <only those actually changed, plus rerun result>
 ## Verdict: APPROVED | NEEDS_CHANGES | MISSING_SPECIALIST | CONVERGENCE_REQUIRED
 ## Changes Required
-<blocking findings only>
+<blocking findings only, each with its Attribution>
+## Dropped
+<self-healing rare-order findings under keep it simple, each with how it heals; omit when none>
+## Pre-existing
+<new pre-existing defects, with base evidence; omit when none>
 
 Return `CONVERGENCE_REQUIRED` rather than `NEEDS_CHANGES` when a finding asks
 to undo an earlier fix or ruling, a fix would grow the change into a subsystem
@@ -929,7 +1019,13 @@ current owned paths, the current complete task diff, and the exact
 validation/evidence status. Read source only as needed to decide disposition.
 
 The loop exists to make independent reviewers agree on the implementation; a
-round count alone is not a problem. Map the loop: each round's blocking
+round count alone is not a problem. First apply the review scope block below
+to every open blocker and every earlier ruling, checking each against the
+base and not against acceptance wording. Rule each pre-existing finding out
+of the task under `## Rulings`, and list it under `## Pre-existing`. Fix code
+that exists only to repair such findings is out of scope too: when earlier
+rounds added it, choose REPLAN_CURRENT back to the last diff that holds
+only attributable work. Then map the loop: each round's blocking
 findings, whether each was new, recurring, or reopening an earlier fix or
 ruling, and which fix introduced it. Decide whether the open set is narrowing,
 cycling, or regrowing in one mechanism, and why: many genuine special cases,
@@ -952,9 +1048,18 @@ exactly one verdict:
   why the task remains cohesive, and name the mechanism, the exact validated
   source boundary to preserve or restore, and the replacement approach. Do not
   use this to disguise multiple independent product outcomes as phases.
+  The replacement must be SIMPLER than the mechanism it replaces, per
+  `.agents/shared/keep-it-simple.md`. When the open set is rare-case
+  defects, the cure is fewer guarantees, not another layer:
+  - rule the cases that heal by themselves non-blocking under `## Rulings`;
+  - give the mechanism the closest shipped feature's shape, or one of the
+    simpler shapes that file lists.
+  A replacement larger than the code it replaces needs a never-happen reason.
 - RESCOPE_REQUIRED: why one review/evidence campaign is incoherent and a
   split-proposal.md containing independently buildable/testable replacement
-  tasks, acceptance oracles, dependencies, and salvageable work. Propose two
+  tasks, acceptance oracles, dependencies, and salvageable work. Split only
+  the requested behavior: a pre-existing finding never justifies a split,
+  and it never enters a replacement's acceptance. Propose two
   replacements by default, and a third only when one of the two would still
   be incoherent, saying why.
 - HARD_STOP: the exact unsafe or unavailable condition and required human
@@ -1045,7 +1150,12 @@ must not delegate.
 Read context.md, plan.md, review<R>.md, AGENTS.md, REVIEW.md, the `## Rulings`
 of every review-convergence<C>.md, and every source file named by a blocking
 finding. Implement only "Changes Required", following those rulings.
-Do not implement Dropped or non-blocking notes. Stay inside owned-paths.txt and
+Do not implement Dropped, Pre-existing or non-blocking notes. Make the
+narrowest change that removes the attributed failure. DON'T OVERENGINEER
+(`.agents/shared/keep-it-simple.md`). Prefer removing a guarantee, branch or
+mechanism to adding one. Prefer letting a rare case fail cleanly and heal on
+the next try to preserving every outcome. Change shared
+machinery only where that failure lives, never to repair its other callers. Stay inside owned-paths.txt and
 do not edit AI artifacts.
 
 After editing, run the cheapest validation that can catch breakage in the fixed

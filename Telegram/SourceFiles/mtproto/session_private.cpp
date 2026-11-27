@@ -144,6 +144,16 @@ void WrapInvokeAfter(
 	return different;
 }
 
+void WakeKeyWaiters(not_null<Instance*> instance, ShiftedDcId shiftedDcId) {
+	const auto bareDcId = BareDcId(shiftedDcId);
+	const auto dcId = isTemporaryDcId(bareDcId)
+		? getRealIdFromTemporaryDcId(bareDcId)
+		: bareDcId;
+	InvokeQueued(instance, [instance, dcId] {
+		instance->dcTemporaryKeyChanged(dcId);
+	});
+}
+
 base::options::toggle OptionPreferIPv6({
 	.id = kOptionPreferIPv6,
 	.name = "Prefer IPv6",
@@ -175,7 +185,8 @@ SessionPrivate::SessionPrivate(
 , _pingSender(thread, [=] { sendPingByTimer(); })
 , _checkSentRequestsTimer(thread, [=] { checkSentRequests(); })
 , _clearOldContainersTimer(thread, [=] { clearOldContainers(); })
-, _sessionData(std::move(data)) {
+, _sessionData(std::move(data))
+, _reInitGeneration(_sessionData->reInitGeneration()) {
 	Expects(_shiftedDcId != 0);
 
 	moveToThread(thread);
@@ -195,13 +206,7 @@ SessionPrivate::~SessionPrivate() {
 	Expects(_testConnections.empty());
 
 	if (hadKeyCreator) {
-		const auto bareDcId = BareDcId(_shiftedDcId);
-		const auto dcId = isTemporaryDcId(bareDcId)
-			? getRealIdFromTemporaryDcId(bareDcId)
-			: bareDcId;
-		InvokeQueued(_instance, [instance = _instance, dcId] {
-			instance->dcTemporaryKeyChanged(dcId);
-		});
+		WakeKeyWaiters(_instance, _shiftedDcId);
 	}
 }
 
@@ -289,26 +294,34 @@ void SessionPrivate::checkSentRequests() {
 		return;
 	}
 	auto requesting = false;
+	auto waitingForResponses = false;
 	auto nextTimeout = kCheckSentRequestTimeout;
 	{
 		QReadLocker locker(_sessionData->haveSentMutex());
 		const auto &haveSent = _sessionData->haveSentMap();
+		waitingForResponses = !haveSent.empty();
 		for (const auto &[msgId, request] : haveSent) {
-			if (request->lastSentTime <= checkTime) {
+			const auto checkedAt = std::max(
+				request->lastSentTime,
+				request->lastStateCheckTime);
+			if (checkedAt <= checkTime) {
 				// Need to check state.
-				request->lastSentTime = now;
+				request->lastStateCheckTime = now;
 				if (_stateRequestData.emplace(msgId).second) {
 					requesting = true;
 				}
 			} else {
-				nextTimeout = std::min(request->lastSentTime - checkTime, nextTimeout);
+				nextTimeout = std::min(
+					checkedAt - checkTime,
+					nextTimeout);
 			}
 		}
 	}
 	if (requesting) {
 		_sessionData->queueSendAnything(kSendStateRequestWaiting);
 	}
-	if (nextTimeout < kCheckSentRequestTimeout) {
+	if (waitingForResponses) {
+		// A state request (no requestId) won't re-arm this timer.
 		_checkSentRequestsTimer.callOnce(nextTimeout);
 	}
 }
@@ -336,6 +349,16 @@ void SessionPrivate::clearOldContainers() {
 			}
 		} else {
 			nextTimeout = std::min(i->second.sent - checkTime, nextTimeout);
+			++i;
+		}
+	}
+	auto &stateAndResend = _stateAndResendRequests;
+	for (auto i = begin(stateAndResend); i != end(stateAndResend);) {
+		const auto sent = i->second->lastSentTime;
+		if (sent <= checkTime) {
+			i = stateAndResend.erase(i);
+		} else {
+			nextTimeout = std::min(sent - checkTime, nextTimeout);
 			++i;
 		}
 	}
@@ -439,6 +462,7 @@ void SessionPrivate::changeSessionId() {
 	_ackRequestData.clear();
 	_resendRequestData.clear();
 	_stateRequestData.clear();
+	_stateAndResendRequests.clear();
 	_receivedMessageIds.clear();
 }
 
@@ -659,11 +683,19 @@ void SessionPrivate::tryToSend() {
 		if (!_stateRequestData.empty()) {
 			auto ids = QVector<MTPlong>();
 			ids.reserve(_stateRequestData.size());
+			QReadLocker locker(_sessionData->haveSentMutex());
+			const auto &haveSent = _sessionData->haveSentMap();
 			for (const auto id : base::take(_stateRequestData)) {
-				ids.push_back(MTP_long(id));
+				if (haveSent.contains(id)) {
+					ids.push_back(MTP_long(id));
+				}
 			}
-			stateRequest = SerializedRequest::Serialize(MTPMsgsStateReq(
-				MTP_msgs_state_req(MTP_vector<MTPlong>(ids))));
+			locker.unlock();
+			if (!ids.isEmpty()) {
+				stateRequest = SerializedRequest::Serialize(
+					MTPMsgsStateReq(MTP_msgs_state_req(
+						MTP_vector<MTPlong>(ids))));
+			}
 		}
 		if (_connection->usingHttpWait()) {
 			httpWaitRequest = SerializedRequest::Serialize(MTPHttpWait(
@@ -809,6 +841,7 @@ void SessionPrivate::tryToSend() {
 			if (toSendRequest->requestId) {
 				if (toSendRequest.needAck()) {
 					toSendRequest->lastSentTime = crl::now();
+					toSendRequest->delivered = false;
 
 					QWriteLocker locker2(_sessionData->haveSentMutex());
 					auto &haveSent = _sessionData->haveSentMap();
@@ -918,6 +951,7 @@ void SessionPrivate::tryToSend() {
 				if (request->requestId) {
 					if (request.needAck()) {
 						request->lastSentTime = crl::now();
+						request->delivered = false;
 						int32 reqNeedsLayer = (needsLayer && request->needsLayer) ? toSendRequest->size() : 0;
 						if (request->after) {
 							WrapInvokeAfter(toSendRequest, request, haveSent, reqNeedsLayer ? initSizeInInts : 0);
@@ -991,13 +1025,14 @@ void SessionPrivate::tryToSend() {
 				bigMsgId,
 				forceNewMsgId);
 			_sentContainers.emplace(containerMsgId, std::move(sentIdsWrap));
-
-			if (scheduleCheckSentRequests && !_checkSentRequestsTimer.isActive()) {
-				_checkSentRequestsTimer.callOnce(kCheckSentRequestTimeout);
-			}
+		}
+		if (scheduleCheckSentRequests
+			&& !_checkSentRequestsTimer.isActive()) {
+			_checkSentRequestsTimer.callOnce(
+				kCheckSentRequestTimeout);
 		}
 	}
-	sendSecureRequest(std::move(toSendRequest), needAnyResponse);
+	sendSecureRequest(std::move(toSendRequest), needAnyResponse, sendAll);
 	if (someSkipped) {
 		InvokeQueued(this, [=] {
 			tryToSend();
@@ -1016,10 +1051,11 @@ void SessionPrivate::retryByTimer() {
 	connectToServer();
 }
 
-void SessionPrivate::restartNow() {
+void SessionPrivate::restartNow(uint64 reInitGeneration) {
 	_retryTimeout = 1;
 	_retryTimer.cancel();
 	restart();
+	_reInitGeneration = reInitGeneration;
 }
 
 void SessionPrivate::connectToServer(bool afterConfig) {
@@ -1171,11 +1207,16 @@ void SessionPrivate::restart() {
 	setState(-_retryTimeout);
 }
 
-void SessionPrivate::onSentSome(uint64 size) {
+void SessionPrivate::onSentSome(uint64 size, bool behindUnanswered) {
 	if (!_waitForReceivedTimer.isActive()) {
 		auto remain = static_cast<uint64>(_waitForReceived);
 		if (!_oldConnection) {
 			Assert(remain <= kMaxReceiveTimeout);
+
+			// A reply may wait behind undelivered requests.
+			if (behindUnanswered) {
+				size = std::max(size, haveSentBytes());
+			}
 
 			// 8kb / sec, so 512 kb give 64 sec
 			auto remainBySize = size * _waitForReceived / 8192;
@@ -1463,11 +1504,11 @@ void SessionPrivate::handleReceived() {
 		}
 
 		auto lock = QReadLocker(_sessionData->haveReceivedMutex());
-		const auto tryToReceive = !_sessionData->haveReceivedMessages().empty();
+		const auto receivedCount = _sessionData->haveReceivedMessages().size();
 		lock.unlock();
 
-		if (tryToReceive) {
-			DEBUG_LOG(("MTP Info: queueTryToReceive() - need to parse in another thread, %1 messages.").arg(_sessionData->haveReceivedMessages().size()));
+		if (receivedCount) {
+			DEBUG_LOG(("MTP Info: queueTryToReceive() - need to parse in another thread, %1 messages.").arg(receivedCount));
 			_sessionData->queueTryToReceive();
 		}
 
@@ -1940,7 +1981,9 @@ SessionPrivate::HandleResult SessionPrivate::handleOneReceived(
 			// the initConnection, so we're not sure yet that it was inited.
 			// Wait till a good response is received.
 		} else {
-			_sessionData->notifyConnectionInited(*_options);
+			_sessionData->notifyConnectionInited(
+				*_options,
+				_reInitGeneration);
 		}
 		requestsAcked(ids, true);
 
@@ -2243,6 +2286,7 @@ void SessionPrivate::requestsAcked(const QVector<MTPlong> &ids, bool byResponse)
 
 				if (!byResponse && _instance->hasCallback(requestId)) {
 					DEBUG_LOG(("Message Info: ignoring ACK for msgId %1 because request %2 requires a response").arg(msgId).arg(requestId));
+					i->second->delivered = true;
 					continue;
 				}
 				haveSent.erase(i);
@@ -2626,6 +2670,7 @@ DcType SessionPrivate::tryAcquireKeyCreation() {
 				}
 				LOG(("AuthKey Error: could not choose public RSA key"));
 			}
+			WakeKeyWaiters(_instance, _shiftedDcId);
 			restart();
 			return;
 		}
@@ -2650,6 +2695,7 @@ DcType SessionPrivate::tryAcquireKeyCreation() {
 				: _sessionData->getPersistentKey();
 			if (!key) {
 				releaseKeyCreationOnFail();
+				WakeKeyWaiters(_instance, _shiftedDcId);
 				restart();
 				return;
 			}
@@ -2665,9 +2711,7 @@ DcType SessionPrivate::tryAcquireKeyCreation() {
 			}
 		}
 	};
-	delegate.sentSome = [=](uint64 size) {
-		onSentSome(size);
-	};
+	delegate.sentSome = [=](uint64 size) { onSentSome(size, false); };
 	delegate.receivedSome = [=] {
 		onReceivedSome();
 	};
@@ -2748,17 +2792,22 @@ void SessionPrivate::destroyTemporaryKey() {
 		return;
 	}
 	LOG(("MTP Info: -404 error received in %1 with temporary key, assuming it was destroyed.").arg(_shiftedDcId));
+	const auto hadKeyCreator = (_keyCreator != nullptr);
 	releaseKeyCreationOnFail();
 	if (_encryptionKey) {
 		_sessionData->destroyTemporaryKey(_encryptionKey->keyId());
 	}
 	applyAuthKey(nullptr);
+	if (hadKeyCreator) {
+		WakeKeyWaiters(_instance, _shiftedDcId);
+	}
 	restart();
 }
 
 bool SessionPrivate::sendSecureRequest(
 		SerializedRequest &&request,
-		bool needAnyResponse) {
+		bool needAnyResponse,
+		bool behindUnanswered) {
 	request.addPadding(false);
 
 	uint32 fullSize = request->size();
@@ -2808,10 +2857,23 @@ bool SessionPrivate::sendSecureRequest(
 	_connection->sendData(std::move(packet));
 
 	if (needAnyResponse) {
-		onSentSome((prefix + fullSize) * sizeof(mtpPrime));
+		onSentSome(
+			(prefix + fullSize) * sizeof(mtpPrime),
+			behindUnanswered);
 	}
 
 	return true;
+}
+
+uint64 SessionPrivate::haveSentBytes() const {
+	QReadLocker locker(_sessionData->haveSentMutex());
+	auto result = uint64();
+	for (const auto &[msgId, request] : _sessionData->haveSentMap()) {
+		if (!request->delivered) {
+			result += request.messageSize() * sizeof(mtpPrime);
+		}
+	}
+	return result;
 }
 
 mtpRequestId SessionPrivate::wasSent(mtpMsgId msgId) const {

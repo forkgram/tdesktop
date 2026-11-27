@@ -20,7 +20,16 @@ or an evidence campaign, and never cut finer than the proposal: a replacement
 that is still too broad splits again when its own assessment runs.
 
 Each replacement must have one useful outcome, a direct acceptance oracle, and
-enough self-contained context to run without this routing session. Cut at the
+enough self-contained context to run without this routing session. Write its
+requirements under [keep it simple](../../../shared/keep-it-simple.md): the
+normal path plus the never-happen outcomes, with rare orders only recovering
+by the next use or restart. Never carry the source's extra guarantees into it.
+Split the source's requested behavior only. Apply perform-task's review scope (pipeline,
+"Review scope") to every finding the source's reviews raised. A finding that
+is pre-existing on the base is not a replacement's work and never enters its
+acceptance, even when the proposal lists it. Name each such finding in the
+receipt as a discovered follow-up candidate, for ordinary discovered routing
+with its normal filters. Cut at the
 network, persistence, engine, ownership/lifetime, lifecycle, UI, platform, or
 evidence boundary that best separates the work when it can stand on its own.
 Keep inseparable APIs and their only callers together. Add a final integration task only when integration
